@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elvi-Ra · Rëff</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Syne:wght@600;700;800&family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="icon" type="image/png" href="/assets/logo-snfi.png">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+    .reff-layout {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-image:
+        radial-gradient(ellipse 80% 60% at 60% 40%, rgba(0,168,120,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 80% at 85% 90%, rgba(0,152,199,0.05) 0%, transparent 55%),
+        radial-gradient(ellipse 40% 40% at 0% 100%, rgba(216,3,0,0.03) 0%, transparent 60%),
+        linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-void) 100%);
+    }
+    .reff-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 52px;
+      min-height: 52px;
+      background: rgba(246,247,249,0.78);
+      backdrop-filter: saturate(140%) blur(18px);
+      -webkit-backdrop-filter: saturate(140%) blur(18px);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
+    }
+    .reff-nav .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-display);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+    .reff-nav .brand .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      box-shadow: 0 0 12px var(--accent-green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .reff-nav .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .reff-nav .breadcrumb .sep {
+      opacity: 0.35;
+    }
+    .reff-nav .breadcrumb .active {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+    .reff-nav .controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .reff-nav .controls .mono {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+    }
+    .reff-frame-wrapper {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      opacity: 0;
+      animation: reveal 0.5s 0.15s var(--ease) forwards;
+    }
+    .reff-frame-wrapper::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-green), transparent);
+      opacity: 0.45;
+      z-index: 2;
+      pointer-events: none;
+      animation: metric-sweep 6s ease-in-out infinite;
+    }
+    .reff-frame-wrapper iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+    .reff-offline {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: var(--bg-void);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      z-index: 10;
+    }
+    .reff-offline.visible {
+      display: flex;
+    }
+    .reff-offline .mono {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.7;
+      letter-spacing: 0.05em;
+    }
+    .reff-offline h3 {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      margin: 0;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .reff-offline code {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-mid);
+      padding: 2px 7px;
+      color: var(--accent-green);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .status-dot.online {
+      background: var(--accent-green);
+      box-shadow: 0 0 6px var(--accent-green);
+    }
+    .status-dot.offline {
+      background: var(--amg-red);
+    }
+  </style>
+</head>
+<body>
+  <div class="reff-layout">
+    <div class="reff-nav">
+      <div class="brand" id="brandLogo">
+        <div class="dot"></div>
+        Elvi-Ra
+      </div>
+      <div class="breadcrumb">
+        <span>MESA</span>
+        <span class="sep">/</span>
+        <span class="active">RËFF</span>
+        <span class="sep">·</span>
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusLabel">comprobando...</span>
+      </div>
+      <div class="controls">
+        <span class="mono" id="userTag"></span>
+        <button class="btn btn--ghost" id="backBtn" style="font-size:0.72rem;padding:0 14px;height:32px;">&lt; Dashboard</button>
+        <button class="btn btn--ghost" id="logoutBtn" style="font-size:0.72rem;padding:0 14px;height:32px;">logout</button>
+      </div>
+    </div>
+    <div class="reff-frame-wrapper">
+      <div class="reff-offline" id="offlineMsg">
+        <h3>Rëff no disponible</h3>
+        <p class="mono">
+          El servidor Elvi-Ra no está corriendo o Rëff no pudo cargarse.<br>
+          Arráncalo con:<br><br>
+          <code>cd "app/backend"</code><br>
+          <code>node server.js</code>
+        </p>
+        <button class="btn" id="retryBtn">Reintentar</button>
+      </div>
+      <iframe id="reffFrame" src="/reff" title="Rëff CRM" allow="clipboard-write"></iframe>
+    </div>
+  </div>
+
+  <script type="module">
+    import { getUser, clearSession, requireAuth, api } from '/js/api.js';
+    requireAuth();
+
+    const user = getUser() || '';
+    document.getElementById('userTag').textContent = user;
+
+    document.getElementById('brandLogo').addEventListener('click', () => {
+      location.href = '/pages/dashboard.html';
+    });
+
+    document.getElementById('backBtn').addEventListener('click', () => {
+      location.href = '/pages/dashboard.html';
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      try { await api.logout(); } catch {}
+      clearSession();
+      location.href = '/pages/login.html';
+    });
+
+    const frame = document.getElementById('reffFrame');
+    const offlineMsg = document.getElementById('offlineMsg');
+    const statusDot = document.getElementById('statusDot');
+    const statusLabel = document.getElementById('statusLabel');
+
+    async function checkReff() {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      try {
+        const r = await fetch('/reff/api/health', { signal: controller.signal });
+        clearTimeout(timer);
+        if (r.ok) {
+          statusDot.className = 'status-dot online';
+          statusLabel.textContent = 'Rëff activo';
+          offlineMsg.classList.remove('visible');
+          frame.style.display = 'block';
+          return true;
+        }
+      } catch {
+        clearTimeout(timer);
+      }
+      statusDot.className = 'status-dot offline';
+      statusLabel.textContent = 'Rëff offline';
+      offlineMsg.classList.add('visible');
+      frame.style.display = 'none';
+      return false;
+    }
+
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      statusLabel.textContent = 'comprobando...';
+      statusDot.className = 'status-dot';
+      checkReff();
+    });
+
+    checkReff();
+    setInterval(checkReff, 30000);
+  </script>
+</body>
+</html>

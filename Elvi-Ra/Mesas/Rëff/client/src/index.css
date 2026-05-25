@@ -1,0 +1,312 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  --accent: #00a878;
+  --accent-hover: #008a62;
+  --accent-dim: rgba(0, 168, 120, 0.08);
+  --accent-border: rgba(0, 168, 120, 0.22);
+
+  --surface-0: #e8eaee;
+  --surface-1: #ffffff;
+  --surface-2: #f0f2f5;
+
+  --border-subtle: rgba(20, 24, 32, 0.06);
+  --border-mid: rgba(20, 24, 32, 0.10);
+  --border-strong: rgba(20, 24, 32, 0.22);
+
+  --text-primary: #0e1116;
+  --text-secondary: #2a2f38;
+  --text-muted: #5a6170;
+
+  --shadow-sm: 0 1px 2px rgba(20, 24, 32, 0.04);
+  --shadow-md: 0 1px 2px rgba(20, 24, 32, 0.04), 0 4px 12px rgba(20, 24, 32, 0.06);
+  --shadow-lg: 0 1px 2px rgba(20, 24, 32, 0.04), 0 12px 32px rgba(20, 24, 32, 0.10);
+  --shadow-xl: 0 1px 2px rgba(20, 24, 32, 0.05), 0 24px 48px rgba(20, 24, 32, 0.14);
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+
+  --transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: 13px;
+  background: var(--surface-0);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 60% 40%, rgba(0,168,120,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 80% at 85% 90%, rgba(0,152,199,0.04) 0%, transparent 55%),
+    linear-gradient(180deg, #f0f2f5 0%, #e8eaee 100%);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.011em;
+}
+
+/* ── Scrollbar ────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+
+/* ── Prose / Chat ─────────────────────────── */
+.prose-chat {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--text-primary);
+  letter-spacing: -0.011em;
+}
+.prose-chat p { margin: 0.5rem 0; }
+.prose-chat p:first-child { margin-top: 0; }
+.prose-chat p:last-child { margin-bottom: 0; }
+.prose-chat strong { color: var(--text-primary); font-weight: 600; }
+.prose-chat em { color: var(--text-secondary); font-style: italic; }
+.prose-chat ul, .prose-chat ol { padding-left: 1.4rem; margin: 0.6rem 0; }
+.prose-chat li { margin: 0.25rem 0; }
+.prose-chat code {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--text-primary);
+}
+.prose-chat pre {
+  background: #f6f6f8 !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem !important;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+.prose-chat pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+}
+.prose-chat h1, .prose-chat h2, .prose-chat h3 {
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  font-weight: 600;
+  margin: 1.2rem 0 0.4rem;
+  letter-spacing: -0.02em;
+}
+.prose-chat h1 { font-size: 1.05rem; }
+.prose-chat h2 { font-size: 0.95rem; }
+.prose-chat h3 { font-size: 0.875rem; }
+.prose-chat blockquote {
+  border-left: 3px solid var(--border-mid);
+  padding: 0.25rem 0 0.25rem 1rem;
+  color: var(--text-secondary);
+  margin: 0.6rem 0;
+}
+.prose-chat a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 113, 227, 0.3);
+  transition: border-color var(--transition-fast);
+}
+.prose-chat a:hover { border-color: var(--accent); }
+.prose-chat hr { border: none; border-top: 1px solid var(--border-subtle); margin: 1rem 0; }
+.prose-chat table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  margin: 0.75rem 0;
+}
+.prose-chat th {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-mid);
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+}
+.prose-chat td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+
+/* ── Typing indicator ─────────────────────── */
+@keyframes typing-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+.typing-dot {
+  animation: typing-pulse 1.3s infinite;
+  display: inline-block;
+  color: var(--text-muted);
+}
+.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+.typing-dot:nth-child(3) { animation-delay: 0.36s; }
+
+/* ── Spinner ──────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  border: 2px solid rgba(0, 0, 0, 0.08);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+/* ── Cursor blink ─────────────────────────── */
+@keyframes cursor-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
+
+/* ── Fade-in / Animations ─────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up {
+  animation: fadeUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.fade-in {
+  animation: fadeIn 0.35s ease-out both;
+}
+
+/* ── Apple-style card ─────────────────────── */
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-base), transform var(--transition-base), border-color var(--transition-base);
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  border-color: var(--border-mid);
+}
+
+/* ── Apple-style button ───────────────────── */
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+  letter-spacing: -0.01em;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border-mid);
+  border-radius: 999px;
+  padding: 6px 15px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+  letter-spacing: -0.01em;
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+/* ── Apple-style input ────────────────────── */
+.input-field {
+  background: var(--surface-1);
+  border: 1px solid var(--border-mid);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  width: 100%;
+  box-sizing: border-box;
+  letter-spacing: -0.011em;
+}
+.input-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12);
+}
+.input-field::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* ── Glass surface (subtle Apple Vision) ──── */
+.glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* ── Textarea reset ───────────────────────── */
+textarea {
+  font-family: var(--font-body);
+  field-sizing: content;
+}
+textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* ── Subtle fine-grain dot pattern (tech touch) ── */
+.tech-dots {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}

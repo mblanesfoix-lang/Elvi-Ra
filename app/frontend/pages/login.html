@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elvi-Ra · Acceso</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Syne:wght@600;700;800&family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="icon" type="image/png" href="/assets/logo-snfi.png">
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+</head>
+<body>
+  <main class="login-shell" id="loginShell">
+    <canvas id="hero-webgl" class="login-shell__canvas" aria-hidden="true"></canvas>
+    <div class="login-shell__grid" aria-hidden="true"></div>
+    <div class="login-shell__scan" aria-hidden="true"></div>
+
+    <div class="login-shell__bracket login-shell__bracket--tl" aria-hidden="true"></div>
+    <div class="login-shell__bracket login-shell__bracket--tr" aria-hidden="true"></div>
+    <div class="login-shell__bracket login-shell__bracket--bl" aria-hidden="true"></div>
+    <div class="login-shell__bracket login-shell__bracket--br" aria-hidden="true"></div>
+
+    <div class="login-shell__hud-top" aria-hidden="true">
+      <div class="login-shell__hud-cell"><span class="k">NODE</span><span class="v">ELVI-RA/01·NAVARRA</span></div>
+      <div class="login-shell__hud-cell"><span class="k">UPLINK</span><span class="v"><i class="dot"></i> LIVE</span></div>
+      <div class="login-shell__hud-cell"><span class="k">UTC</span><span class="v" id="hero-clock">--:--:--</span></div>
+      <div class="login-shell__hud-cell"><span class="k">CYCLE</span><span class="v">PLATFORM·v0.1</span></div>
+    </div>
+
+    <div class="login-shell__coord login-shell__coord--l" aria-hidden="true">
+      <span>42°48'N</span><span>01°38'W</span><span>ELEV 449m</span>
+    </div>
+    <div class="login-shell__coord login-shell__coord--r" aria-hidden="true">
+      <span>OEM-MOD</span><span>STD-S</span><span>REV 0.1</span>
+    </div>
+
+    <section class="login-card reveal">
+      <img src="/assets/logo-snfi.png" alt="S-NFI" style="height:40px;width:auto;margin-bottom:20px;display:block;">
+      <span class="kicker">S-NFI · Elvi-Ra · Acceso</span>
+      <h1>Bienvenida a la <em>Infraestructura</em>.</h1>
+
+      <form id="loginForm" class="stack" autocomplete="off" style="margin-top: 28px;">
+        <div>
+          <label for="username">Usuario</label>
+          <input class="input" id="username" name="username" type="text" required autocomplete="username">
+        </div>
+        <div>
+          <label for="password">Contraseña</label>
+          <input class="input" id="password" name="password" type="password" required autocomplete="current-password">
+        </div>
+        <div class="error-msg" id="err"></div>
+        <button class="btn sage" type="submit" id="submitBtn">Entrar →</button>
+      </form>
+
+      <p class="mono" style="margin-top:28px; opacity:.7;">
+        v0.1 · boceto · Navarra
+      </p>
+    </section>
+  </main>
+
+  <script>
+    // ---- Hero WebGL: orbital sphere with mouse tracking (ported from SNFI) ----
+    (function initHeroWebGL() {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduced) return;
+      const canvas = document.getElementById('hero-webgl');
+      if (!canvas || typeof THREE === 'undefined') return;
+      const parent = canvas.parentElement;
+      let w = parent.clientWidth;
+      let h = parent.clientHeight;
+      const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(w, h, false);
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 100);
+      camera.position.z = 4.2;
+
+      const sphereFill = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1.0, 4),
+        new THREE.MeshBasicMaterial({ color: 0x00a878, transparent: true, opacity: 0.08 })
+      );
+      scene.add(sphereFill);
+
+      const wire = new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.0, 3));
+      const mesh = new THREE.LineSegments(
+        wire,
+        new THREE.LineBasicMaterial({ color: 0x00875a, transparent: true, opacity: 0.85 })
+      );
+      scene.add(mesh);
+
+      const core = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.45, 1),
+        new THREE.MeshBasicMaterial({ color: 0x0098c7, wireframe: true, transparent: true, opacity: 0.65 })
+      );
+      scene.add(core);
+
+      const PTS = 420;
+      const positions = new Float32Array(PTS * 3);
+      for (let i = 0; i < PTS; i++) {
+        const r = 1.25 + Math.random() * 0.5;
+        const t = Math.random() * Math.PI * 2;
+        const p = Math.acos(2 * Math.random() - 1);
+        positions[i * 3]     = r * Math.sin(p) * Math.cos(t);
+        positions[i * 3 + 1] = r * Math.sin(p) * Math.sin(t);
+        positions[i * 3 + 2] = r * Math.cos(p);
+      }
+      const ptsGeo = new THREE.BufferGeometry();
+      ptsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const points = new THREE.Points(
+        ptsGeo,
+        new THREE.PointsMaterial({ color: 0x006e4d, size: 0.022, transparent: true, opacity: 1.0 })
+      );
+      scene.add(points);
+
+      function makeRing(rIn, rOut, opacity, color, rotX, rotY) {
+        const r = new THREE.Mesh(
+          new THREE.RingGeometry(rIn, rOut, 128),
+          new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity })
+        );
+        r.rotation.x = rotX;
+        r.rotation.y = rotY;
+        return r;
+      }
+      const ring1 = makeRing(1.32, 1.34, 0.55, 0x00a878, Math.PI / 2.3, 0);
+      const ring2 = makeRing(1.45, 1.46, 0.35, 0x0098c7, Math.PI / 2.8, Math.PI / 6);
+      const ring3 = makeRing(1.60, 1.605, 0.25, 0x00875a, Math.PI / 1.9, -Math.PI / 8);
+      scene.add(ring1); scene.add(ring2); scene.add(ring3);
+
+      let mx = 0, my = 0, tmx = 0, tmy = 0;
+      window.addEventListener('mousemove', e => {
+        tmx = (e.clientX / window.innerWidth  - 0.5) * 0.6;
+        tmy = (e.clientY / window.innerHeight - 0.5) * 0.6;
+      }, { passive: true });
+
+      function resize() {
+        w = parent.clientWidth;
+        h = parent.clientHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      window.addEventListener('resize', resize);
+
+      let running = true;
+      document.addEventListener('visibilitychange', () => { running = !document.hidden; });
+
+      function frame(t) {
+        if (running) {
+          mx += (tmx - mx) * 0.05;
+          my += (tmy - my) * 0.05;
+          sphereFill.rotation.y = t * 0.00018 + mx;
+          sphereFill.rotation.x = t * 0.00012 + my;
+          mesh.rotation.y = t * 0.00018 + mx;
+          mesh.rotation.x = t * 0.00012 + my;
+          core.rotation.y = -t * 0.0004;
+          core.rotation.x =  t * 0.00025;
+          points.rotation.y =  t * 0.00009 + mx * 0.5;
+          points.rotation.x = -t * 0.00006 + my * 0.5;
+          ring1.rotation.z =  t * 0.00020;
+          ring2.rotation.z = -t * 0.00015;
+          ring3.rotation.z =  t * 0.00012;
+          renderer.render(scene, camera);
+        }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    })();
+
+    // ---- HUD clock ----
+    (function clock() {
+      const el = document.getElementById('hero-clock');
+      if (!el) return;
+      function tick() {
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        el.textContent = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+      }
+      tick();
+      setInterval(tick, 1000);
+    })();
+  </script>
+
+  <script type="module">
+    import { api, setSession, getToken } from '/js/api.js';
+    if (getToken()) location.href = '/pages/dashboard.html';
+
+    const form = document.getElementById('loginForm');
+    const err  = document.getElementById('err');
+    const btn  = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Verificando…';
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      try {
+        const r = await api.login(username, password);
+        setSession(r.token, r.user);
+        location.href = '/pages/dashboard.html';
+      } catch (ex) {
+        err.textContent = ex.message || 'Error de acceso';
+        btn.disabled = false;
+        btn.textContent = 'Entrar →';
+      }
+    });
+  </script>
+</body>
+</html>

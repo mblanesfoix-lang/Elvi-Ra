@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Elvi-Ra · Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Syne:wght@600;700;800&family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="icon" type="image/png" href="/assets/logo-snfi.png">
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand"><img src="/assets/logo-snfi.png" alt="S-NFI" style="height:22px;width:auto;vertical-align:middle;margin-right:8px;"> Elvi-Ra</div>
+    <div class="row" style="gap:18px;">
+      <span class="mono" id="userTag">…</span>
+      <button class="btn ghost" id="logoutBtn">Cerrar sesión</button>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="reveal">
+      <span class="kicker">Mesas de trabajo</span>
+      <h1>Dashboard</h1>
+      <p style="max-width:640px; margin-top:8px;">
+        Elige una mesa para empezar. Cada mesa agrupa los agentes y herramientas necesarias para una operación concreta.
+      </p>
+    </header>
+
+    <section class="tiles">
+      <div class="tile reveal delay-1" style="opacity:.55; cursor:not-allowed;">
+        <div class="emoji">◆</div>
+        <h3>ELVI-RA</h3>
+        <p>Centro de mando. Orquesta sistemas, OPHS y bridges con Sentinel + Herzog.</p>
+        <p class="mono" style="margin-top:10px;">próximamente</p>
+      </div>
+
+      <a class="tile reveal delay-2" href="/pages/reff.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+        <div class="emoji">◈</div>
+        <h3>Rëff</h3>
+        <p>CRM de inteligencia comercial S-NFI. Deep Research, scoring OPHS, auditoría Herzog, LI Contacts, Finder y Email Creator.</p>
+        <p class="mono" style="margin-top:10px;">acceso directo →</p>
+      </a>
+
+      <div class="tile reveal delay-3" style="opacity:.55; cursor:not-allowed;">
+        <div class="emoji">⚙️</div>
+        <h3>Próxima mesa</h3>
+        <p>Mesa adicional en construcción.</p>
+        <p class="mono" style="margin-top:10px;">próximamente</p>
+      </div>
+    </section>
+
+    <div class="hr"></div>
+
+    <section class="reveal">
+      <span class="kicker">Estado del sistema</span>
+      <div class="tiles" style="margin-top:12px;">
+        <div class="card" id="cardTcontroler">
+          <span class="mono">T'Controler</span>
+          <h2 style="margin-top:8px;" id="tcMain">— / —</h2>
+          <p class="mono" id="tcSub">cargando...</p>
+        </div>
+        <div class="card" id="cardSessions">
+          <span class="mono">Usuarios activos</span>
+          <h2 style="margin-top:8px;" id="sessMain">—</h2>
+          <p class="mono" id="sessSub">monitorización · básica</p>
+        </div>
+        <div class="card">
+          <span class="mono">Data Base</span>
+          <h2 style="margin-top:8px;">OK</h2>
+          <p class="mono">Elvi-Ra alimentando agentes</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { api, getUser, clearSession, requireAuth } from '/js/api.js';
+    requireAuth();
+    const user = getUser() || '';
+    document.getElementById('userTag').textContent = user;
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      try { await api.logout(); } catch {}
+      clearSession();
+      location.href = '/pages/login.html';
+    });
+
+    // Load overview (sessions + companies)
+    try {
+      const ov = await api.elviraOverview();
+      const sessions = ov.metrics?.activeSessions ?? '—';
+      document.getElementById('sessMain').textContent = sessions;
+      document.getElementById('sessSub').textContent =
+        `${ov.metrics?.totalCompanies ?? 0} empresas · ${ov.metrics?.totalUsers ?? 0} usuarios`;
+    } catch {}
+
+    // T'Controler — solo admin
+    try {
+      const tc = await api.tcontroler();
+      const g = tc.global;
+      const totalK = ((g.totalTokens || 0) / 1000).toFixed(1);
+      const cap = tc.tokensCap ? `${(tc.tokensCap / 1000).toFixed(0)}k` : '∞';
+      document.getElementById('tcMain').textContent = `${totalK}k / ${cap}`;
+      const costStr = `$${g.costTotalUSD.toFixed(3)} · ${g.calls} llamadas IA`;
+      const byUserStr = (tc.byUser || [])
+        .map(u => `${u.user.split(' ')[0]}: $${u.costTotalUSD.toFixed(3)}`)
+        .join(' · ');
+      document.getElementById('tcSub').textContent = byUserStr ? `${costStr} — ${byUserStr}` : costStr;
+    } catch {
+      document.getElementById('tcMain').textContent = '— / —';
+      document.getElementById('tcSub').textContent = 'solo visible para Admin';
+    }
+  </script>
+</body>
+</html>
