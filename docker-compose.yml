@@ -1,0 +1,92 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ELVI-RA · Stack soberano
+# Despliegue: Coolify → "Docker Compose" → apunta a este archivo.
+#
+# Variables de entorno requeridas en el panel de Coolify:
+#   ANTHROPIC_API_KEY   — solo si LLM_PROVIDER=anthropic
+#   LLM_PROVIDER        — "anthropic" | "ollama"  (default: anthropic)
+#   OLLAMA_MODEL        — "llama3:70b" | "mistral:7b" | etc.
+#   JWT_SECRET          — secreto para tokens Rëff (genera con: openssl rand -hex 32)
+#   NODE_ENV            — production
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Ollama · Motor LLM local ────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Puerto solo accesible dentro de la red Docker — no expuesto a internet
+    expose:
+      - "11434"
+    networks:
+      - elvira-net
+    # Para GPU NVIDIA en Hetzner dedicado:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ── Elvi-Ra · Backend principal ────────────────────────────────────────────
+  elvira:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5173
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:70b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-7}
+    volumes:
+      - elvira-data:/app/backend/data
+    ports:
+      - "5173:5173"
+    networks:
+      - elvira-net
+
+  # ── Rëff · Agente de convergencia ──────────────────────────────────────────
+  reff:
+    build:
+      context: ./Elvi-Ra/Mesas/Rëff
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3001
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:70b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      JWT_SECRET: ${JWT_SECRET:-}
+      DB_PATH: /app/data/snfi.db
+    volumes:
+      - reff-data:/app/data
+    expose:
+      - "3001"
+    networks:
+      - elvira-net
+
+volumes:
+  ollama-models:
+  elvira-data:
+  reff-data:
+
+networks:
+  elvira-net:
+    driver: bridge

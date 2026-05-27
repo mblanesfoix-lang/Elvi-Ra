@@ -10,12 +10,22 @@ Funciones núcleo:
 - **Data Base viva**: fuente de verdad sobre S-NFI (identidad, tecnología, comercial, OPHS). Cada agente bebe de aquí.
 - **Dashboard**: panel central con mesas, T'Controler (tokens), credenciales y monitorización.
 - **Comunicación bidireccional con Sentinel y Herzog** en tiempo real:
-  - **Sentinel** → quién entra, quién no, intentos, accesos, identidad, autenticación.
-  - **Herzog** → gobernanza, auditoría interna de candidatos (Fase 4 protocolo S-NFI), bloqueo de candidatos tóxicos, evaluación OPHS.
+  - **Sentinel** → quién entra, quién no, intentos, accesos, identidad, autenticación. Vigila anomalías.
+  - **Herzog** → gobernanza, auditoría interna de candidatos (Fase 4 protocolo S-NFI), bloqueo de candidatos tóxicos, evaluación OPHS. Prevención de fraude.
+- **Marco OPHS** (Ops, PAIA, Herzog, Sentinel): la Constitución del sistema. Absolutamente intocable. Ninguna acción de Elvi-Ra, Rëff ni agente externo puede violar o saltarse OPHS.
 - **T'Controler**: control de tokens (solo Admin).
 - **Monitorización de usuarios**: actividad, sesiones, permisos.
 
 Elvi-Ra **observa cada segundo**: quién entra, quién quiere entrar, bajo qué seguridad, qué pasa, qué hay.
+
+## Rëff (Agente de Convergencia)
+
+Rëff es el **agente par de Elvi-Ra**. No orquesta: analiza, audita y valida científicamente.
+
+- **Rol**: análisis profundo, auditoría interna, validación científica de datos y candidatos.
+- **Convergencia con Elvi-Ra**: Elvi-Ra procesa y orquesta; Rëff somete el output al escrutinio de Pactvm Viridi antes de presentar el Dictamen de Soberanía al Admin.
+- **Acceso**: lectura en tiempo real de S-NFI Factory (estado), S-NFI Resilience (BSS), S-NFI U-2 (límites químicos).
+- **Autoridad de ejecución**: NINGUNA. Solo análisis y recomendación. El ser humano autoriza.
 
 ## Identidad S-NFI (resumen operativo)
 
@@ -23,7 +33,7 @@ Elvi-Ra **observa cada segundo**: quién entra, quién quiere entrar, bajo qué 
 - **Tecnología core**: S-NFI BioHybrid™ (BioGrinder + BioDeshidratador) → residuo orgánico húmedo a biopellet 7-8%.
 - **Physical AI**: no SCADA. Optimización adaptativa + gobernanza centralizada vía software propietario.
 - **Modelo**: OEM. Cuatro vectores monetización: energía, residuo, dato, control.
-- **Pactum Viridi 2030/2050**: tokenización kg biomasa = unidad digital kWh.
+- **Pactvm Viridi**: motor regulador que filtra toda actividad de Elvi-Ra/Rëff y terceros. Cumplimiento EU, EEUU, UK por diseño. También define el estándar de tokenización: kg biomasa = unidad digital kWh (horizonte 2030/2050).
 - **NO es**: startup verde, revendedor maquinaria, gestor residuos clásico, productor biogás, servicios digitales puros.
 - **Fuente verdad completa**: `Elvi-Ra/Elvi-Ra Zone/BackEnd/SNFI Base Conocimiento.txt`
 
@@ -78,6 +88,18 @@ Clasificación: ESTRATÉGICO / OPERATIVO / NO CANDIDATO. Duda razonable → no e
 
 Penalización fuerte: biogás/anaerobia clásica, sanciones CNMC, opacidad, incompatibilidad OPHS.
 
+## Doctrina de Ejecución (Regla de Oro)
+
+**Inmutable. No negociable.**
+
+> El ser humano autoriza. El ser humano supervisa. El sistema ejecuta.
+
+- Elvi-Ra propone orquestación. Nunca ejecuta acciones físicas en infraestructura industrial sin confirmación humana.
+- Rëff valida y audita. Nunca actúa de forma autónoma.
+- S-NFI Systems ejecuta solo bajo validación del Admin.
+- Toda directriz crítica requiere autorización de Dirección (Admin).
+- Logs absolutos e inmutables. Todo acceso registrado de forma permanente.
+
 ## Stack actual
 
 - **Backend**: Node.js + Express + CORS. ESM (`"type": "module"`). Persistencia JSON por usuario. Token en memoria 8h. **Falta `server.js`**.
@@ -87,7 +109,8 @@ Penalización fuerte: biogás/anaerobia clásica, sanciones CNMC, opacidad, inco
 
 ## Infraestructura de despliegue
 
-- **Nube privada S-NFI**: servidor Debian en Hetzner (Europa). Gestionado por el jefe.
+- **Infraestructura soberana (destino)**: servidores físicos propios, Debian/Kubernetes. Cero dependencia de nubes públicas de terceros para el núcleo lógico.
+- **Fase transitoria (deploy actual)**: servidor Debian en Hetzner (Europa). Gestionado por el jefe. Hetzner = tercero aceptado solo para capa de deploy, no para núcleo lógico.
 - **Coolify**: plataforma CI/CD auto-alojada (equivalente a Vercel/Netlify). Push a `main` → deploy automático.
 - **GitHub**: repositorio fuente (pendiente conectar a Coolify).
 - **Implicaciones para código**:

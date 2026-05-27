@@ -203,7 +203,7 @@ function saveInvs(i: Investigation[]) { localStorage.setItem(LS_INVS, JSON.strin
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const GOLD = '#c9a84c';
+const GOLD = '#00a878';
 const CRM_STATUSES: CrmStatus[] = ['Nuevo', 'Contactado', 'En negociación', 'Cerrado', 'Descartado'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -389,7 +389,7 @@ function parseCompanies(text: string): Company[] {
 function FieldPill({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div style={{
-      padding: '6px 10px', borderRadius: 8,
+      padding: '6px 10px', borderRadius: 0,
       background: highlight ? 'rgba(52,211,153,0.08)' : 'rgba(0,0,0,0.04)',
       border: `1px solid ${highlight ? 'rgba(52,211,153,0.2)' : 'rgba(0,0,0,0.07)'}`,
     }}>
@@ -403,7 +403,7 @@ function Badge({ label, color }: { label: string; color: string }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center',
-      padding: '2px 8px', borderRadius: 20,
+      padding: '2px 8px', borderRadius: 0,
       fontSize: 10, fontWeight: 600, letterSpacing: '0.06em',
       color, background: color + '18',
       border: `1px solid ${color}30`,
@@ -418,7 +418,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
     <div style={{
       background: 'rgba(0,0,0,0.04)',
       border: '1px solid rgba(0,0,0,0.08)',
-      borderRadius: 16,
+      borderRadius: 0,
       backdropFilter: 'blur(12px)',
       ...style,
     }}>
@@ -487,7 +487,7 @@ function DarkSelect({
         onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '9px 12px', borderRadius: 10, fontSize: 12, cursor: 'pointer',
+          padding: '9px 12px', borderRadius: 0, fontSize: 12, cursor: 'pointer',
           background: 'rgba(0,0,0,0.06)', border: `1px solid rgba(0,0,0,${open ? '0.2' : '0.1'})`,
           color: selected ? '#fff' : 'rgba(0,0,0,0.35)', outline: 'none',
           transition: 'border-color 0.15s',
@@ -502,7 +502,7 @@ function DarkSelect({
         <div ref={dropRef} style={{
           position: 'fixed', top: rect.bottom + 4, left: rect.left, width: rect.width, zIndex: 99999,
           background: 'var(--surface-1)', border: '1px solid rgba(0,0,0,0.12)',
-          borderRadius: 12, overflow: 'hidden',
+          borderRadius: 0, overflow: 'hidden',
           boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
         }}>
           {placeholder && (
@@ -523,7 +523,7 @@ function DarkSelect({
               onClick={() => { onChange(o.value); setOpen(false); }}
               style={{
                 width: '100%', padding: '9px 14px', textAlign: 'left', fontSize: 12, cursor: 'pointer',
-                background: value === o.value ? `rgba(201,168,76,0.15)` : 'transparent',
+                background: value === o.value ? `rgba(0,168,120,0.15)` : 'transparent',
                 border: 'none',
                 color: value === o.value ? GOLD : 'rgba(0,0,0,0.8)',
                 transition: 'background 0.1s',
@@ -569,7 +569,7 @@ function DarkSelectInline({
         type="button"
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
         style={{
-          padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          padding: '4px 12px', borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: 'pointer',
           background: color + '18', border: `1px solid ${color}40`, color,
           display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
         }}
@@ -583,7 +583,7 @@ function DarkSelectInline({
         <div style={{
           position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 9999, minWidth: 140,
           background: 'var(--surface-1)', border: '1px solid rgba(0,0,0,0.12)',
-          borderRadius: 12, overflow: 'hidden',
+          borderRadius: 0, overflow: 'hidden',
           boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
         }}>
           {options.map(o => {
@@ -679,7 +679,7 @@ function TaskPanel({ leadId, tasks, setTasks }: { leadId: string; tasks: Task[];
           {myTasks.map(task => (
             <div key={task.id} style={{
               display: 'flex', alignItems: 'center', gap: 10,
-              padding: '8px 12px', borderRadius: 10,
+              padding: '8px 12px', borderRadius: 0,
               background: 'rgba(0,0,0,0.03)',
               border: '1px solid rgba(0,0,0,0.06)',
               opacity: task.status === 'Completada' ? 0.5 : 1,
@@ -747,7 +747,7 @@ function TaskPanel({ leadId, tasks, setTasks }: { leadId: string; tasks: Task[];
           onKeyDown={e => e.key === 'Enter' && addTask()}
           placeholder="Nueva tarea..."
           style={{
-            flex: 1, padding: '7px 12px', borderRadius: 10, fontSize: 12,
+            flex: 1, padding: '7px 12px', borderRadius: 0, fontSize: 12,
             background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
             color: 'var(--text-primary)', outline: 'none',
           }}
@@ -763,7 +763,7 @@ function TaskPanel({ leadId, tasks, setTasks }: { leadId: string; tasks: Task[];
           value={newDue}
           onChange={e => setNewDue(e.target.value)}
           style={{
-            padding: '7px 10px', borderRadius: 10, fontSize: 11,
+            padding: '7px 10px', borderRadius: 0, fontSize: 11,
             background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
             color: 'rgba(0,0,0,0.6)', outline: 'none', colorScheme: 'light',
           }}
@@ -772,7 +772,7 @@ function TaskPanel({ leadId, tasks, setTasks }: { leadId: string; tasks: Task[];
           onClick={addTask}
           disabled={!newTitle.trim()}
           style={{
-            padding: '7px 16px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+            padding: '7px 16px', borderRadius: 0, fontSize: 12, fontWeight: 600,
             background: newTitle.trim() ? GOLD : 'rgba(0,0,0,0.06)',
             color: newTitle.trim() ? '#000' : 'rgba(0,0,0,0.2)',
             border: 'none', cursor: newTitle.trim() ? 'pointer' : 'default',
@@ -914,7 +914,7 @@ function LeadCard({
             <button
               onClick={() => onDelete(lead.id)}
               style={{
-                padding: '6px 14px', borderRadius: 10, fontSize: 11, cursor: 'pointer',
+                padding: '6px 14px', borderRadius: 0, fontSize: 11, cursor: 'pointer',
                 background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)',
                 color: '#f87171', transition: 'all 0.2s',
               }}
@@ -972,7 +972,7 @@ function SheetTabs({
               borderBottom: isActive ? `2px solid ${tabColor}` : '2px solid transparent',
               background: isActive ? `${tabColor}18` : 'transparent',
               cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s',
-              borderRadius: '6px 6px 0 0',
+              borderRadius: 0,
             }}
             onClick={() => onSelect(sheet.id)}
             onDoubleClick={e => startEdit(sheet.id, sheet.name, e)}
@@ -1010,7 +1010,7 @@ function SheetTabs({
                 onClick={e => e.stopPropagation()}
                 style={{
                   background: 'rgba(0,0,0,0.08)', border: `1px solid ${tabColor}80`,
-                  borderRadius: 4, padding: '2px 6px', fontSize: 12, color: 'var(--text-primary)',
+                  borderRadius: 0, padding: '2px 6px', fontSize: 12, color: 'var(--text-primary)',
                   width: Math.max(60, editName.length * 9), outline: 'none',
                 }}
               />
@@ -1060,8 +1060,8 @@ function SpreadsheetNotesEditor({ leadId, notes, onChange }: {
       onBlur={() => { onChange(leadId, value); setEditing(false); }}
       style={{
         width: '100%', minHeight: 80, padding: '8px 10px',
-        background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(201,168,76,0.35)',
-        borderRadius: 8, color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.6,
+        background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,168,120,0.35)',
+        borderRadius: 0, color: 'var(--text-primary)', fontSize: 12, lineHeight: 1.6,
         resize: 'vertical', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
       }}
     />
@@ -1071,10 +1071,10 @@ function SpreadsheetNotesEditor({ leadId, notes, onChange }: {
       style={{
         minHeight: 40, padding: '8px 10px',
         background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)',
-        borderRadius: 8, cursor: 'text', fontSize: 12, color: 'rgba(0,0,0,0.6)',
+        borderRadius: 0, cursor: 'text', fontSize: 12, color: 'rgba(0,0,0,0.6)',
         lineHeight: 1.6, whiteSpace: 'pre-wrap', transition: 'border-color 0.15s',
       }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(201,168,76,0.3)'; }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(0,168,120,0.3)'; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(0,0,0,0.08)'; }}
     >
       {value || <span style={{ color: 'rgba(0,0,0,0.2)', fontStyle: 'italic' }}>Haz clic para añadir notas…</span>}
@@ -1170,7 +1170,7 @@ function CrmSpreadsheet({
             key={s}
             onClick={() => setCrmFilter(s)}
             style={{
-              padding: '5px 14px', borderRadius: 20, fontSize: 11, fontWeight: 500, cursor: 'pointer',
+              padding: '5px 14px', borderRadius: 0, fontSize: 11, fontWeight: 500, cursor: 'pointer',
               background: crmFilter === s ? (s === 'Todos' ? GOLD : statusColor(s as CrmStatus)) + '20' : 'rgba(0,0,0,0.04)',
               border: `1px solid ${crmFilter === s ? (s === 'Todos' ? GOLD : statusColor(s as CrmStatus)) + '50' : 'rgba(0,0,0,0.08)'}`,
               color: crmFilter === s ? (s === 'Todos' ? GOLD : statusColor(s as CrmStatus)) : 'rgba(0,0,0,0.4)',
@@ -1190,7 +1190,7 @@ function CrmSpreadsheet({
           <div style={{ fontSize: 13, color: 'rgba(0,0,0,0.25)' }}>Sin leads con este filtro.</div>
         </Card>
       ) : (
-        <div style={{ overflowX: 'auto', borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)' }}>
+        <div style={{ overflowX: 'auto', borderRadius: 0, border: '1px solid rgba(0,0,0,0.08)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto', minWidth: 920 }}>
             <thead>
               <tr>
@@ -1244,7 +1244,7 @@ function CrmSpreadsheet({
                       </td>
                       <td style={{ padding: '11px 12px', borderBottom: rowBorder, whiteSpace: 'nowrap' }}>
                         <span style={{
-                          display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 20,
+                          display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 0,
                           fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', color: clr,
                           background: clr + '18', border: `1px solid ${clr}30`,
                         }}>
@@ -1324,9 +1324,9 @@ function CrmSpreadsheet({
                                 <div style={{ position: 'relative' }}>
                                   <button
                                     onClick={e => { e.stopPropagation(); setMoveMenuOpen(moveMenuOpen === lead.id ? null : lead.id); }}
-                                    style={{ padding: '6px 14px', borderRadius: 10, fontSize: 11, cursor: 'pointer', background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.25)', color: '#c9a84c', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 5 }}
-                                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.2)')}
-                                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.1)')}
+                                    style={{ padding: '6px 14px', borderRadius: 0, fontSize: 11, cursor: 'pointer', background: 'rgba(0,168,120,0.1)', border: '1px solid rgba(0,168,120,0.25)', color: '#00a878', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 5 }}
+                                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.2)')}
+                                    onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.1)')}
                                   >
                                     <svg width="11" height="11" viewBox="0 0 15 15" fill="none"><path d="M1 7.5h13M8.5 2l5.5 5.5-5.5 5.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
                                     Mover a hoja
@@ -1334,14 +1334,14 @@ function CrmSpreadsheet({
                                   {moveMenuOpen === lead.id && (
                                     <div
                                       onClick={e => e.stopPropagation()}
-                                      style={{ position: 'absolute', bottom: '110%', right: 0, background: '#1a1a1a', border: '1px solid rgba(201,168,76,0.25)', borderRadius: 10, padding: '4px 0', minWidth: 160, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}
+                                      style={{ position: 'absolute', bottom: '110%', right: 0, background: '#1a1a1a', border: '1px solid rgba(0,168,120,0.25)', borderRadius: 0, padding: '4px 0', minWidth: 160, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}
                                     >
                                       {sheets.filter(s => s.id !== activeSheetId).map(s => (
                                         <button
                                           key={s.id}
                                           onClick={e => { e.stopPropagation(); onMove(lead.id, s.id); setMoveMenuOpen(null); }}
                                           style={{ width: '100%', padding: '7px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'rgba(255,255,255,0.75)', textAlign: 'left', transition: 'background 0.15s' }}
-                                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.12)')}
+                                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.12)')}
                                           onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                                         >{s.name}</button>
                                       ))}
@@ -1351,7 +1351,7 @@ function CrmSpreadsheet({
                               )}
                               <button
                                 onClick={e => { e.stopPropagation(); onDelete(lead.id); }}
-                                style={{ padding: '6px 14px', borderRadius: 10, fontSize: 11, cursor: 'pointer', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171', transition: 'all 0.2s' }}
+                                style={{ padding: '6px 14px', borderRadius: 0, fontSize: 11, cursor: 'pointer', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171', transition: 'all 0.2s' }}
                                 onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.2)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.1)')}
                               >Eliminar lead</button>
@@ -1567,9 +1567,10 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
       <Card style={{ padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <div style={{
-            width: 18, height: 18, borderRadius: 999, background: continent ? GOLD : 'rgba(0,0,0,0.1)',
+            width: 18, height: 18, borderRadius: 0, background: continent ? GOLD : 'rgba(0,0,0,0.08)',
+            border: `1px solid ${continent ? GOLD + '60' : 'rgba(0,0,0,0.15)'}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 10, fontWeight: 800, color: continent ? '#000' : 'rgba(0,0,0,0.4)',
+            fontSize: 10, fontWeight: 800, color: continent ? '#fff' : 'rgba(0,0,0,0.4)',
             flexShrink: 0, transition: 'all 0.2s',
           }}>1</div>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Continente</span>
@@ -1594,7 +1595,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                 onClick={() => handleContinentClick(c.id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '7px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                  padding: '7px 12px', borderRadius: 0, cursor: 'pointer', textAlign: 'left',
                   background: active ? c.color + '20' : 'rgba(0,0,0,0.03)',
                   border: `1px solid ${active ? c.color + '60' : 'rgba(0,0,0,0.07)'}`,
                   transition: 'all 0.18s',
@@ -1620,9 +1621,10 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
         <Card style={{ padding: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{
-              width: 18, height: 18, borderRadius: 999, background: country ? GOLD : 'rgba(0,0,0,0.1)',
+              width: 18, height: 18, borderRadius: 0, background: country ? GOLD : 'rgba(0,0,0,0.08)',
+              border: `1px solid ${country ? GOLD + '60' : 'rgba(0,0,0,0.15)'}`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 10, fontWeight: 800, color: country ? '#000' : 'rgba(0,0,0,0.4)',
+              fontSize: 10, fontWeight: 800, color: country ? '#fff' : 'rgba(0,0,0,0.4)',
               flexShrink: 0, transition: 'all 0.2s',
             }}>2</div>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>País</span>
@@ -1642,7 +1644,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                   key={c}
                   onClick={() => setCountry(active ? '' : c)}
                   style={{
-                    padding: '5px 12px', borderRadius: 20, fontSize: 11, cursor: 'pointer',
+                    padding: '5px 12px', borderRadius: 0, fontSize: 11, cursor: 'pointer',
                     background: active ? selectedContinent.color + '25' : 'rgba(0,0,0,0.04)',
                     border: `1px solid ${active ? selectedContinent.color + '70' : 'rgba(0,0,0,0.09)'}`,
                     color: active ? selectedContinent.color : 'rgba(0,0,0,0.65)',
@@ -1662,9 +1664,10 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
       <Card style={{ padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <div style={{
-            width: 18, height: 18, borderRadius: 999, background: sector ? GOLD : 'rgba(0,0,0,0.1)',
+            width: 18, height: 18, borderRadius: 0, background: sector ? GOLD : 'rgba(0,0,0,0.08)',
+            border: `1px solid ${sector ? GOLD + '60' : 'rgba(0,0,0,0.15)'}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 10, fontWeight: 800, color: sector ? '#000' : 'rgba(0,0,0,0.4)',
+            fontSize: 10, fontWeight: 800, color: sector ? '#fff' : 'rgba(0,0,0,0.4)',
             flexShrink: 0, transition: 'all 0.2s',
           }}>{selectedContinent ? '3' : '2'}</div>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>Sector</span>
@@ -1685,7 +1688,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                 onClick={() => setSector(active ? '' : s.id)}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '7px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                  padding: '7px 10px', borderRadius: 0, cursor: 'pointer', textAlign: 'left',
                   background: active ? GOLD + '18' : 'rgba(0,0,0,0.03)',
                   border: `1px solid ${active ? GOLD + '55' : 'rgba(0,0,0,0.07)'}`,
                   transition: 'all 0.15s',
@@ -1696,7 +1699,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                 <span style={{ fontSize: 12, color: active ? GOLD : 'rgba(0,0,0,0.7)', fontWeight: active ? 700 : 400 }}>{s.label}</span>
                 <span style={{
                   fontSize: 9, fontWeight: 700, letterSpacing: '0.05em',
-                  padding: '2px 7px', borderRadius: 20,
+                  padding: '2px 7px', borderRadius: 0,
                   background: ptsColor + '18', color: ptsColor,
                   border: `1px solid ${ptsColor}30`, flexShrink: 0, marginLeft: 8,
                 }}>{s.pts}pts</span>
@@ -1719,7 +1722,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
               placeholder="Ej: Navarra, Cataluña, Valle del Ebro..."
               style={{
-                width: '100%', padding: '8px 12px', borderRadius: 8, fontSize: 12,
+                width: '100%', padding: '8px 12px', borderRadius: 0, fontSize: 12,
                 background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
                 color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box',
               }}
@@ -1730,12 +1733,12 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
           {(continent || sector) && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', flex: 1, minWidth: 160 }}>
               {selectedContinent && (
-                <span style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: selectedContinent.color + '20', color: selectedContinent.color, border: `1px solid ${selectedContinent.color}35` }}>
+                <span style={{ padding: '4px 10px', borderRadius: 0, fontSize: 11, fontWeight: 600, background: selectedContinent.color + '20', color: selectedContinent.color, border: `1px solid ${selectedContinent.color}35` }}>
                   {selectedContinent.flag} {country || selectedContinent.label}
                 </span>
               )}
               {sector && (
-                <span style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: GOLD + '18', color: GOLD, border: `1px solid ${GOLD}35` }}>
+                <span style={{ padding: '4px 10px', borderRadius: 0, fontSize: 11, fontWeight: 600, background: GOLD + '18', color: GOLD, border: `1px solid ${GOLD}35` }}>
                   {sector}
                 </span>
               )}
@@ -1747,7 +1750,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
               onClick={handleSearch}
               disabled={!canSearch || loading}
               style={{
-                padding: '8px 22px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                padding: '8px 22px', borderRadius: 0, fontSize: 12, fontWeight: 600,
                 cursor: canSearch && !loading ? 'pointer' : 'default',
                 background: canSearch && !loading ? GOLD : 'rgba(0,0,0,0.06)',
                 color: canSearch && !loading ? '#000' : 'rgba(0,0,0,0.2)',
@@ -1758,7 +1761,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
               <button
                 onClick={() => { abortRef.current?.abort(); setLoading(false); }}
                 style={{
-                  padding: '8px 16px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                  padding: '8px 16px', borderRadius: 0, fontSize: 12, cursor: 'pointer',
                   background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.2)',
                   color: '#f87171', whiteSpace: 'nowrap',
                 }}
@@ -1783,7 +1786,7 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
       {/* Error */}
       {searchError && (
         <div style={{
-          padding: '10px 14px', borderRadius: 8, fontSize: 12,
+          padding: '10px 14px', borderRadius: 0, fontSize: 12,
           background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
           color: '#f87171', display: 'flex', alignItems: 'center', gap: 8,
         }}>
@@ -1843,12 +1846,12 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                 <button
                   onClick={() => onAddTocrm(c)}
                   style={{
-                    padding: '8px 16px', borderRadius: 10, fontSize: 11, fontWeight: 600, cursor: 'pointer', flexShrink: 0,
-                    background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}40`, color: GOLD,
+                    padding: '8px 16px', borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: 'pointer', flexShrink: 0,
+                    background: 'rgba(0,168,120,0.12)', border: `1px solid ${GOLD}40`, color: GOLD,
                     transition: 'all 0.2s',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.22)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.12)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.22)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.12)')}
                 >+ CRM</button>
               </div>
             </Card>
@@ -1900,12 +1903,12 @@ function Buscador({ onAddTocrm }: { onAddTocrm: (c: Company) => void }) {
                       <button
                         onClick={() => onAddTocrm(c)}
                         style={{
-                          padding: '6px 12px', borderRadius: 8, fontSize: 10, fontWeight: 600, cursor: 'pointer', flexShrink: 0,
-                          background: 'rgba(201,168,76,0.1)', border: `1px solid ${GOLD}30`, color: GOLD,
+                          padding: '6px 12px', borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: 'pointer', flexShrink: 0,
+                          background: 'rgba(0,168,120,0.1)', border: `1px solid ${GOLD}30`, color: GOLD,
                           transition: 'all 0.2s',
                         }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.2)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.1)')}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.2)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.1)')}
                       >+ CRM</button>
                     </div>
                   ))}
@@ -2180,7 +2183,7 @@ function LiContacts() {
     <div style={{
       background: 'var(--surface-1, rgba(0,0,0,0.02))',
       border: `1px solid ${confidenceColor(result.confidence)}25`,
-      borderRadius: 12,
+      borderRadius: 0,
       padding: '14px 16px',
       display: 'flex',
       flexDirection: 'column',
@@ -2207,13 +2210,13 @@ function LiContacts() {
             color: confidenceColor(result.confidence),
             background: confidenceColor(result.confidence) + '12',
             border: `1px solid ${confidenceColor(result.confidence)}28`,
-            borderRadius: 6, padding: '3px 7px', flexShrink: 0,
+            borderRadius: 0, padding: '3px 7px', flexShrink: 0,
           }}>{result.confidence}</span>
         )}
       </div>
 
       {result.emailMain && result.emailMain !== 'No disponible' && result.emailMain !== 'No encontrado' && (
-        <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 8, padding: '10px 12px' }}>
+        <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 0, padding: '10px 12px' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(0,0,0,0.3)', letterSpacing: '0.07em', marginBottom: 6, textTransform: 'uppercase' }}>Email</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <button
@@ -2237,7 +2240,7 @@ function LiContacts() {
                 color: emailConfColor(result.emailConfidence),
                 background: emailConfColor(result.emailConfidence) + '15',
                 border: `1px solid ${emailConfColor(result.emailConfidence)}30`,
-                borderRadius: 5, padding: '2px 6px', flexShrink: 0,
+                borderRadius: 0, padding: '2px 6px', flexShrink: 0,
               }}>{result.emailConfidence}</span>
             )}
           </div>
@@ -2249,7 +2252,7 @@ function LiContacts() {
       )}
 
       {result.phone && result.phone !== 'No encontrado' && result.phone !== 'No disponible' && (
-        <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 8, padding: '10px 12px' }}>
+        <div style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 0, padding: '10px 12px' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(0,0,0,0.3)', letterSpacing: '0.07em', marginBottom: 6, textTransform: 'uppercase' }}>Teléfono</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <button
@@ -2271,7 +2274,7 @@ function LiContacts() {
               <span style={{
                 fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
                 color: '#60a5fa', background: '#60a5fa15', border: '1px solid #60a5fa30',
-                borderRadius: 5, padding: '2px 6px', flexShrink: 0,
+                borderRadius: 0, padding: '2px 6px', flexShrink: 0,
               }}>{result.phoneType}</span>
             )}
           </div>
@@ -2289,7 +2292,7 @@ function LiContacts() {
               display: 'flex', alignItems: 'center', gap: 5,
               fontSize: 11, color: '#0077b5', textDecoration: 'none',
               background: '#0077b50e', border: '1px solid #0077b525',
-              borderRadius: 6, padding: '4px 9px',
+              borderRadius: 0, padding: '4px 9px',
             }}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="#0077b5">
@@ -2299,7 +2302,7 @@ function LiContacts() {
           </a>
         )}
         {result.otherChannels && result.otherChannels !== 'No disponible' && result.otherChannels !== 'No hay' && (
-          <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.45)', background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.09)', borderRadius: 6, padding: '4px 9px' }}>
+          <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.45)', background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.09)', borderRadius: 0, padding: '4px 9px' }}>
             {result.otherChannels}
           </span>
         )}
@@ -2310,7 +2313,7 @@ function LiContacts() {
             style={{
               fontSize: 11, color: GOLD, cursor: 'pointer', fontWeight: 600,
               background: GOLD + '0f', border: `1px solid ${GOLD}30`,
-              borderRadius: 6, padding: '4px 11px',
+              borderRadius: 0, padding: '4px 11px',
             }}
           >Guardar</button>
         )}
@@ -2356,7 +2359,7 @@ function LiContacts() {
     <div style={{
       background: 'var(--surface-1, rgba(0,0,0,0.02))',
       border: '1px solid rgba(0,0,0,0.07)',
-      borderRadius: 12,
+      borderRadius: 0,
       padding: '14px 16px',
       display: 'flex',
       flexDirection: 'column',
@@ -2383,7 +2386,7 @@ function LiContacts() {
           color: profileTypeColor(contact.profileType),
           background: profileTypeColor(contact.profileType) + '12',
           border: `1px solid ${profileTypeColor(contact.profileType)}28`,
-          borderRadius: 6, padding: '3px 7px', flexShrink: 0, whiteSpace: 'nowrap',
+          borderRadius: 0, padding: '3px 7px', flexShrink: 0, whiteSpace: 'nowrap',
         }}>{contact.profileType}</span>
       </div>
 
@@ -2403,7 +2406,7 @@ function LiContacts() {
               display: 'flex', alignItems: 'center', gap: 5,
               fontSize: 11, color: '#0077b5', textDecoration: 'none',
               background: '#0077b50e', border: '1px solid #0077b525',
-              borderRadius: 6, padding: '4px 9px',
+              borderRadius: 0, padding: '4px 9px',
             }}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="#0077b5">
@@ -2419,7 +2422,7 @@ function LiContacts() {
               display: 'flex', alignItems: 'center', gap: 5,
               fontSize: 11, color: 'rgba(0,0,0,0.5)', cursor: 'pointer',
               background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.09)',
-              borderRadius: 6, padding: '4px 9px', maxWidth: 200,
+              borderRadius: 0, padding: '4px 9px', maxWidth: 200,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
             title={contact.email}
@@ -2437,7 +2440,7 @@ function LiContacts() {
             style={{
               fontSize: 11, color: GOLD, cursor: 'pointer', fontWeight: 600,
               background: GOLD + '0f', border: `1px solid ${GOLD}30`,
-              borderRadius: 6, padding: '4px 11px',
+              borderRadius: 0, padding: '4px 11px',
             }}
           >
             Guardar
@@ -2453,13 +2456,13 @@ function LiContacts() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Sub-tab switcher */}
-      <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.05)', borderRadius: 10, padding: 3 }}>
+      <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.05)', borderRadius: 0, padding: 3 }}>
         {([['li', 'LI Contacts'], ['finder', 'Finder — Email & Tel.']] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setSubTab(id)}
             style={{
-              flex: 1, padding: '7px 14px', borderRadius: 8, fontSize: 12,
+              flex: 1, padding: '7px 14px', borderRadius: 0, fontSize: 12,
               fontWeight: subTab === id ? 700 : 500,
               background: subTab === id ? (id === 'finder' ? GOLD : 'white') : 'transparent',
               color: subTab === id ? (id === 'finder' ? '#000' : 'var(--text-primary)') : 'rgba(0,0,0,0.45)',
@@ -2484,7 +2487,7 @@ function LiContacts() {
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
             placeholder="Ej: Sofina, Tikehau Capital, Iberdrola, MCH Private Equity..."
             style={{
-              flex: 1, padding: '10px 14px', borderRadius: 10, fontSize: 13,
+              flex: 1, padding: '10px 14px', borderRadius: 0, fontSize: 13,
               background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.1)',
               color: 'var(--text-primary)', outline: 'none',
             }}
@@ -2493,7 +2496,7 @@ function LiContacts() {
             onClick={handleSearch}
             disabled={!canSearch}
             style={{
-              padding: '10px 22px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+              padding: '10px 22px', borderRadius: 0, fontSize: 13, fontWeight: 600,
               background: canSearch ? GOLD : 'rgba(0,0,0,0.07)',
               color: canSearch ? '#000' : 'rgba(0,0,0,0.25)',
               border: 'none', cursor: canSearch ? 'pointer' : 'not-allowed',
@@ -2509,7 +2512,7 @@ function LiContacts() {
               key={f}
               onClick={() => setProfileFilter(f)}
               style={{
-                padding: '5px 12px', borderRadius: 8, fontSize: 11, cursor: 'pointer',
+                padding: '5px 12px', borderRadius: 0, fontSize: 11, cursor: 'pointer',
                 fontWeight: profileFilter === f ? 700 : 400,
                 background: profileFilter === f
                   ? (f === 'Todos' ? GOLD + '18' : profileTypeColor(f as LiProfileType) + '14')
@@ -2542,7 +2545,7 @@ function LiContacts() {
 
       {/* Error */}
       {error && (
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: '#fef2f2', border: '1px solid #fca5a5', fontSize: 12, color: '#dc2626' }}>
+        <div style={{ padding: '12px 16px', borderRadius: 0, background: '#fef2f2', border: '1px solid #fca5a5', fontSize: 12, color: '#dc2626' }}>
           {error}
         </div>
       )}
@@ -2586,7 +2589,7 @@ function LiContacts() {
                     <span style={{
                       fontSize: 9, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase',
                       color: profileTypeColor(record.profileFilter), background: profileTypeColor(record.profileFilter) + '12',
-                      border: `1px solid ${profileTypeColor(record.profileFilter)}28`, borderRadius: 6, padding: '3px 7px', flexShrink: 0,
+                      border: `1px solid ${profileTypeColor(record.profileFilter)}28`, borderRadius: 0, padding: '3px 7px', flexShrink: 0,
                     }}>{record.profileFilter}</span>
                   )}
                   <span style={{ fontSize: 10, color: 'rgba(0,0,0,0.25)', flexShrink: 0 }}>
@@ -2632,7 +2635,7 @@ function LiContacts() {
                   style={{
                     position: 'absolute', top: 10, right: 10,
                     background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.1)',
-                    borderRadius: 6, cursor: 'pointer', color: 'rgba(0,0,0,0.35)',
+                    borderRadius: 0, cursor: 'pointer', color: 'rgba(0,0,0,0.35)',
                     fontSize: 14, lineHeight: 1, padding: '2px 6px', fontWeight: 700,
                   }}
                 >×</button>
@@ -2649,18 +2652,18 @@ function LiContacts() {
             Buscar datos de contacto de una persona
           </div>
           {finderLiContacts.length > 0 && (
-            <div style={{ marginBottom: 14, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10, overflow: 'hidden', background: 'rgba(0,0,0,0.025)' }}>
+            <div style={{ marginBottom: 14, border: '1px solid rgba(0,0,0,0.08)', borderRadius: 0, overflow: 'hidden', background: 'rgba(0,0,0,0.025)' }}>
               <button
                 type="button"
                 onClick={() => setFinderLiExpanded(v => !v)}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-                  background: finderLiExpanded ? 'rgba(201,168,76,0.08)' : 'transparent',
+                  background: finderLiExpanded ? 'rgba(0,168,120,0.08)' : 'transparent',
                   border: 'none', cursor: 'pointer', textAlign: 'left',
                 }}
               >
                 <span style={{
-                  width: 24, height: 24, borderRadius: 6, flexShrink: 0,
+                  width: 24, height: 24, borderRadius: 0, flexShrink: 0,
                   background: '#0077b512', border: '1px solid #0077b52a',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
@@ -2701,7 +2704,7 @@ function LiContacts() {
                           borderRadius: 9, cursor: 'pointer', textAlign: 'left',
                           background: selected ? GOLD + '12' : 'rgba(255,255,255,0.72)',
                           border: `1px solid ${selected ? GOLD + '55' : 'rgba(0,0,0,0.08)'}`,
-                          boxShadow: selected ? '0 1px 4px rgba(201,168,76,0.15)' : 'none',
+                          boxShadow: selected ? '0 1px 4px rgba(0,168,120,0.15)' : 'none',
                         }}
                       >
                         <span style={{
@@ -2717,7 +2720,7 @@ function LiContacts() {
                           <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.name}</span>
                           <span style={{ display: 'block', fontSize: 10, color: 'rgba(0,0,0,0.48)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.title || contact.company}</span>
                           {contact.company && <span style={{ display: 'block', fontSize: 10, color: 'rgba(0,0,0,0.32)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contact.company}</span>}
-                          <span style={{ display: 'inline-flex', marginTop: 6, fontSize: 9, fontWeight: 700, color: profileTypeColor(contact.profileType), background: profileTypeColor(contact.profileType) + '12', border: `1px solid ${profileTypeColor(contact.profileType)}25`, borderRadius: 5, padding: '2px 6px' }}>
+                          <span style={{ display: 'inline-flex', marginTop: 6, fontSize: 9, fontWeight: 700, color: profileTypeColor(contact.profileType), background: profileTypeColor(contact.profileType) + '12', border: `1px solid ${profileTypeColor(contact.profileType)}25`, borderRadius: 0, padding: '2px 6px' }}>
                             {contact.profileType}
                           </span>
                         </span>
@@ -2734,7 +2737,7 @@ function LiContacts() {
                           }}
                           title="Buscar en Finder"
                           style={{
-                            padding: '4px 8px', borderRadius: 6, flexShrink: 0,
+                            padding: '4px 8px', borderRadius: 0, flexShrink: 0,
                             fontSize: 10, fontWeight: 700, color: GOLD,
                             background: GOLD + '12', border: `1px solid ${GOLD}35`,
                           }}
@@ -2784,7 +2787,7 @@ function LiContacts() {
               onKeyDown={e => e.key === 'Enter' && handleFinderSearch()}
               placeholder="Nombre completo de la persona..."
               style={{
-                flex: 1, padding: '10px 14px', borderRadius: 10, fontSize: 13,
+                flex: 1, padding: '10px 14px', borderRadius: 0, fontSize: 13,
                 background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.1)',
                 color: 'var(--text-primary)', outline: 'none',
               }}
@@ -2793,7 +2796,7 @@ function LiContacts() {
               onClick={handleFinderSearch}
               disabled={!canFinderSearch}
               style={{
-                padding: '10px 22px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                padding: '10px 22px', borderRadius: 0, fontSize: 13, fontWeight: 600,
                 background: canFinderSearch ? GOLD : 'rgba(0,0,0,0.07)',
                 color: canFinderSearch ? '#000' : 'rgba(0,0,0,0.25)',
                 border: 'none', cursor: canFinderSearch ? 'pointer' : 'not-allowed',
@@ -2807,7 +2810,7 @@ function LiContacts() {
             onChange={e => { setFinderHint(e.target.value); setFinderSelectedLiId(''); }}
             placeholder="Empresa o sector (opcional — mejora la búsqueda)..."
             style={{
-              width: '100%', padding: '8px 14px', borderRadius: 8, fontSize: 12,
+              width: '100%', padding: '8px 14px', borderRadius: 0, fontSize: 12,
               background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)',
               color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box',
             }}
@@ -2829,7 +2832,7 @@ function LiContacts() {
         )}
 
         {finderError && (
-          <div style={{ padding: '12px 16px', borderRadius: 10, background: '#fef2f2', border: '1px solid #fca5a5', fontSize: 12, color: '#dc2626' }}>
+          <div style={{ padding: '12px 16px', borderRadius: 0, background: '#fef2f2', border: '1px solid #fca5a5', fontSize: 12, color: '#dc2626' }}>
             {finderError}
           </div>
         )}
@@ -2860,7 +2863,7 @@ function LiContacts() {
                     style={{
                       position: 'absolute', top: 10, right: 10,
                       background: 'rgba(0,0,0,0.06)', border: '1px solid rgba(0,0,0,0.1)',
-                      borderRadius: 6, cursor: 'pointer', color: 'rgba(0,0,0,0.35)',
+                      borderRadius: 0, cursor: 'pointer', color: 'rgba(0,0,0,0.35)',
                       fontSize: 14, lineHeight: 1, padding: '2px 6px', fontWeight: 700,
                     }}
                   >×</button>
@@ -3114,7 +3117,7 @@ function InvCard({
         <div style={{ display: 'flex', gap: 4 }}>
           {inv.dimensions.map(d => (
             <div key={d.id} style={{
-              width: 22, height: 22, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 22, height: 22, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 9, fontWeight: 700,
               background: d.status === 'completada' ? dimValColor(d.result) + '22' : 'rgba(0,0,0,0.04)',
               border: `1px solid ${d.status === 'completada' ? dimValColor(d.result) + '60' : 'rgba(0,0,0,0.08)'}`,
@@ -3129,7 +3132,7 @@ function InvCard({
           <span style={{
             fontSize: 10, fontWeight: 700, color: '#34d399',
             background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)',
-            padding: '3px 10px', borderRadius: 20, letterSpacing: '0.06em',
+            padding: '3px 10px', borderRadius: 0, letterSpacing: '0.06em',
           }}>LISTA</span>
         )}
 
@@ -3147,7 +3150,7 @@ function InvCard({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {inv.dimensions.map(d => (
               <div key={d.id} style={{
-                borderRadius: 12,
+                borderRadius: 0,
                 background: d.status === 'completada' ? 'rgba(0,0,0,0.03)' : 'rgba(0,0,0,0.015)',
                 border: `1px solid ${d.status === 'completada' ? dimValColor(d.result) + '25' : 'rgba(0,0,0,0.06)'}`,
                 overflow: 'hidden',
@@ -3155,7 +3158,7 @@ function InvCard({
                 {/* Dim header */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' }}>
                   <span style={{
-                    width: 24, height: 24, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 24, height: 24, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 10, fontWeight: 800,
                     background: d.status === 'completada' ? dimValColor(d.result) + '22' : 'rgba(0,0,0,0.06)',
                     color: d.status === 'completada' ? dimValColor(d.result) : 'rgba(0,0,0,0.4)',
@@ -3170,7 +3173,7 @@ function InvCard({
                       onClick={() => onAnalyzeDim(inv.id, d.id)}
                       disabled={analyzing}
                       style={{
-                        padding: '5px 14px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: analyzing ? 'default' : 'pointer',
+                        padding: '5px 14px', borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: analyzing ? 'default' : 'pointer',
                         background: analyzing ? 'rgba(0,0,0,0.04)' : `${GOLD}18`,
                         border: `1px solid ${analyzing ? 'rgba(0,0,0,0.08)' : GOLD + '40'}`,
                         color: analyzing ? 'rgba(0,0,0,0.2)' : GOLD,
@@ -3186,7 +3189,7 @@ function InvCard({
                   )}
                   {d.status === 'completada' && (
                     <span style={{
-                      fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
+                      fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 0,
                       background: dimValColor(d.result) + '18',
                       border: `1px solid ${dimValColor(d.result)}40`,
                       color: dimValColor(d.result),
@@ -3215,7 +3218,7 @@ function InvCard({
             <button
               onClick={() => onDelete(inv.id)}
               style={{
-                padding: '6px 14px', borderRadius: 10, fontSize: 11, cursor: 'pointer',
+                padding: '6px 14px', borderRadius: 0, fontSize: 11, cursor: 'pointer',
                 background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
                 color: '#f87171',
               }}
@@ -3227,7 +3230,7 @@ function InvCard({
               <button
                 onClick={() => onGoToCrm(inv.leadId)}
                 style={{
-                  padding: '8px 20px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  padding: '8px 20px', borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                   background: 'linear-gradient(135deg, #34d399, #10b981)',
                   border: 'none', color: '#000',
                   boxShadow: '0 4px 16px rgba(52,211,153,0.3)',
@@ -3356,7 +3359,7 @@ function Analizador({
               onClick={createInv}
               disabled={!selectedLeadId}
               style={{
-                padding: '9px 22px', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                padding: '9px 22px', borderRadius: 0, fontSize: 13, fontWeight: 600,
                 cursor: selectedLeadId ? 'pointer' : 'default',
                 background: selectedLeadId ? GOLD : 'rgba(0,0,0,0.06)',
                 color: selectedLeadId ? '#000' : 'rgba(0,0,0,0.2)',
@@ -3375,7 +3378,7 @@ function Analizador({
             {DIM_DEFS.map((d, i) => (
               <div key={d.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
                 <div style={{
-                  width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 28, height: 28, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 11, fontWeight: 800, flexShrink: 0,
                   background: `${GOLD}18`, border: `1px solid ${GOLD}30`, color: GOLD,
                 }}>{d.id}</div>
@@ -3386,7 +3389,7 @@ function Analizador({
               </div>
             ))}
           </div>
-          <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 10, background: 'rgba(201,168,76,0.06)', border: `1px solid ${GOLD}20` }}>
+          <div style={{ marginTop: 16, padding: '12px 16px', borderRadius: 0, background: 'rgba(0,168,120,0.06)', border: `1px solid ${GOLD}20` }}>
             <div style={{ fontSize: 11, color: 'rgba(0,0,0,0.5)', lineHeight: 1.6 }}>
               Analiza cada dimensión por separado. Conforme completas las 6, el anillo de progreso llega al 100% y se desbloquea el botón de primera toma de contacto.
             </div>
@@ -3515,8 +3518,8 @@ function Emails({ leads }: { leads: Lead[] }) {
         {/* Lead preview */}
         {selectedLead && (
           <div style={{
-            padding: '12px 16px', borderRadius: 12, marginBottom: 16,
-            background: 'rgba(201,168,76,0.06)', border: `1px solid ${GOLD}20`,
+            padding: '12px 16px', borderRadius: 0, marginBottom: 16,
+            background: 'rgba(0,168,120,0.06)', border: `1px solid ${GOLD}20`,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 8, height: 8, borderRadius: 999, background: classColor(selectedLead.classification), flexShrink: 0 }} />
@@ -3539,7 +3542,7 @@ function Emails({ leads }: { leads: Lead[] }) {
             placeholder="Ej: Vimos en LinkedIn que acaban de abrir una nueva planta en Zaragoza..."
             rows={2}
             style={{
-              width: '100%', padding: '10px 12px', borderRadius: 10, fontSize: 12,
+              width: '100%', padding: '10px 12px', borderRadius: 0, fontSize: 12,
               background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
               color: 'var(--text-primary)', outline: 'none', resize: 'none', boxSizing: 'border-box',
               fontFamily: 'inherit',
@@ -3552,7 +3555,7 @@ function Emails({ leads }: { leads: Lead[] }) {
             onClick={generateEmail}
             disabled={!selectedLeadId || loading}
             style={{
-              padding: '10px 28px', borderRadius: 12, fontSize: 13, fontWeight: 600,
+              padding: '10px 28px', borderRadius: 0, fontSize: 13, fontWeight: 600,
               cursor: selectedLeadId && !loading ? 'pointer' : 'default',
               background: selectedLeadId && !loading ? GOLD : 'rgba(0,0,0,0.06)',
               color: selectedLeadId && !loading ? '#000' : 'rgba(0,0,0,0.2)',
@@ -3563,7 +3566,7 @@ function Emails({ leads }: { leads: Lead[] }) {
             <button
               onClick={() => { abortRef.current?.abort(); setLoading(false); }}
               style={{
-                padding: '10px 20px', borderRadius: 12, fontSize: 13, cursor: 'pointer',
+                padding: '10px 20px', borderRadius: 0, fontSize: 13, cursor: 'pointer',
                 background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.2)',
                 color: '#f87171',
               }}
@@ -3580,16 +3583,16 @@ function Emails({ leads }: { leads: Lead[] }) {
             <button
               onClick={copyEmail}
               style={{
-                padding: '6px 16px', borderRadius: 10, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}40`, color: GOLD,
+                padding: '6px 16px', borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                background: 'rgba(0,168,120,0.12)', border: `1px solid ${GOLD}40`, color: GOLD,
                 transition: 'all 0.2s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.22)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(201,168,76,0.12)')}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.22)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,168,120,0.12)')}
             >Copiar</button>
           </div>
           <div style={{
-            padding: '16px 20px', borderRadius: 12,
+            padding: '16px 20px', borderRadius: 0,
             background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.07)',
             fontSize: 13, color: 'rgba(0,0,0,0.85)', lineHeight: 1.7,
             whiteSpace: 'pre-wrap', fontFamily: 'inherit',
@@ -3742,7 +3745,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
   ];
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: 'var(--surface-0)', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100%', background: 'var(--surface-0)', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif" }}>
       {/* Sidebar */}
       <div style={{
         width: 220, flexShrink: 0, display: 'flex', flexDirection: 'column',
@@ -3761,8 +3764,8 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
             </svg>
           </button>
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: GOLD, letterSpacing: '0.08em', textTransform: 'uppercase' }}>S-NFI RËFF</div>
-            <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', marginTop: 2 }}>South Navarre Fresh Innovations · CRM</div>
+            <div style={{ fontFamily: "'Syne', 'Inter', system-ui, sans-serif", fontSize: 14, fontWeight: 700, color: '#0e1116', letterSpacing: '-0.01em' }}>Elvi-Ra</div>
+            <div style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 9, color: GOLD, letterSpacing: '0.14em', textTransform: 'uppercase', marginTop: 3, fontWeight: 600 }}>MESA · RËFF</div>
           </div>
         </div>
 
@@ -3774,7 +3777,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
               onClick={() => setNav(n.id)}
               style={{
                 width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                padding: '9px 12px', borderRadius: 10, marginBottom: 2,
+                padding: '9px 12px', borderRadius: 0, marginBottom: 2,
                 background: nav === n.id ? `${GOLD}15` : 'transparent',
                 border: 'none', cursor: 'pointer',
                 color: nav === n.id ? GOLD : 'rgba(0,0,0,0.45)',

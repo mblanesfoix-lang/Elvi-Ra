@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { callLLM, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M } from './llm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -48,8 +49,7 @@ if (!fs.existsSync(ELVIRA_FILE)) fs.writeFileSync(ELVIRA_FILE, JSON.stringify({
   }
 })();
 
-const ANTHROPIC_KEY   = process.env.ANTHROPIC_API_KEY || '';
-const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-7';
+// LLM provider configured in llm.js via LLM_PROVIDER env var
 
 // Credentials per spec (Creedenciales.txt)
 const USERS = {
@@ -405,10 +405,6 @@ EJEMPLO de ficha completa correcta (referencia de estilo y profundidad de rellen
 
 Si no encuentras candidatos reales con datos públicos verificables, devuelve results vacío y explica en resumen. Nunca inventes datos financieros precisos como cifras exactas con decimales no soportados; pero SIEMPRE estima con un número plausible y registra el proxy en "fuentes". Campos numéricos null/0 = error crítico.`;
 
-// Pricing per 1M tokens (claude-opus-4-7 default)
-const PRICE_INPUT_PER_M  = 15;   // USD
-const PRICE_OUTPUT_PER_M = 75;   // USD
-
 function trackTokens(user, operation, inputTokens, outputTokens) {
   const state = readElvira();
   const tc = state.systems.tcontroler;
@@ -429,34 +425,14 @@ function trackTokens(user, operation, inputTokens, outputTokens) {
   writeElvira(state);
 }
 
-async function callClaudeWith(systemPrompt, userPrompt, maxTokens = 4096, user = null, operation = 'unknown') {
-  if (!ANTHROPIC_KEY) throw new Error('ANTHROPIC_API_KEY no configurada');
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': ANTHROPIC_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: ANTHROPIC_MODEL,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(`Anthropic ${r.status}: ${t.slice(0, 400)}`);
+async function callLLMTracked(systemPrompt, userPrompt, maxTokens = 4096, user = null, operation = 'unknown') {
+  const result = await callLLM(systemPrompt, userPrompt, maxTokens);
+  if (user) {
+    trackTokens(user, operation, result.inputTokens, result.outputTokens);
   }
-  const data = await r.json();
-  const text = (data.content || []).map(b => b.text || '').join('').trim();
-  if (user && data.usage) {
-    trackTokens(user, operation, data.usage.input_tokens || 0, data.usage.output_tokens || 0);
-  }
-  return text;
+  return result.text;
 }
-const callClaude = (userPrompt, user) => callClaudeWith(SYSTEM_PROMPT, userPrompt, 8192, user, 'search');
+const callClaude = (userPrompt, user) => callLLMTracked(SYSTEM_PROMPT, userPrompt, 8192, user, 'search');
 
 function extractJson(text) {
   let s = text.trim();
@@ -674,7 +650,7 @@ app.post('/api/linkedin', auth, async (req, res) => {
 
 Devuelve 5–8 perfiles tipo priorizados para outreach LinkedIn alineado a S-NFI. SOLO JSON.`;
 
-    const raw = await callClaudeWith(LINKEDIN_SYSTEM, prompt, 2048, req.user, 'linkedin');
+    const raw = await callLLMTracked(LINKEDIN_SYSTEM, prompt, 2048, req.user, 'linkedin');
     const parsed = extractJson(raw);
     const contactos = Array.isArray(parsed.contactos) ? parsed.contactos : [];
 
@@ -768,7 +744,7 @@ EMPRESA OBJETIVO:
 
 Redacta el email para esta situación, anclado al sector y a las variables S-NFI relevantes. SOLO JSON.`;
 
-    const raw = await callClaudeWith(EMAIL_SYSTEM, prompt, 2048, req.user, 'email');
+    const raw = await callLLMTracked(EMAIL_SYSTEM, prompt, 2048, req.user, 'email');
     const parsed = extractJson(raw);
 
     res.json({
