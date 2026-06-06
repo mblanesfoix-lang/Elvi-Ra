@@ -8,7 +8,7 @@ type Classification = 'PRIORIDAD ALTA' | 'CANDIDATO VÁLIDO' | 'SEGUIMIENTO' | '
 type CrmStatus = 'Nuevo' | 'Contactado' | 'En negociación' | 'Cerrado' | 'Descartado';
 type TaskStatus = 'Pendiente' | 'En curso' | 'Completada';
 type Priority = 'Alta' | 'Media' | 'Baja';
-type NavSection = 'panel' | 'buscador' | 'li-contacts' | 'crm' | 'analizador' | 'analytics' | 'emails';
+type NavSection = 'panel' | 'buscador' | 'li-contacts' | 'crm' | 'analizador' | 'analytics' | 'emails' | 'compliance';
 
 interface Company {
   id: string;
@@ -3621,6 +3621,603 @@ interface Props {
   onBack: () => void;
 }
 
+// ─── Compliance Scanner ───────────────────────────────────────────────────────
+
+interface ConfianzaBreakdown {
+  fuentesWeb: number;
+  registroEncontrado: number;
+  datosVerificables: number;
+  coherenciaLLM: number;
+  coberturaDatos: number;
+}
+
+interface ConfianzaScore {
+  score: number;
+  nivel: 'ALTA' | 'MEDIA' | 'BAJA' | 'INSUFICIENTE';
+  breakdown: ConfianzaBreakdown;
+  factores: string[];
+}
+
+interface ComplianceDoc {
+  id: string;
+  empresa: string;
+  sector: string;
+  jurisdiccion: string;
+  periodo: string;
+  fuente: string;
+  ingestedAt: string;
+  datos: Record<string, unknown>;
+}
+
+interface ComplianceRegistroOficial {
+  encontrado: boolean;
+  nombreRegistrado?: string | null;
+  nif?: string | null;
+  domicilio?: string | null;
+  fechaAltaRegistro?: string | null;
+  registros?: string[];
+}
+
+interface RiesgoOPHS {
+  ops: string;
+  paia: string;
+  herzog: string;
+  sentinel: string;
+}
+
+interface ComplianceResult {
+  empresa: string;
+  sector?: string;
+  jurisdiccion?: string;
+  periodo: string;
+  fuente?: string;
+  confianza?: string;
+  notas?: string;
+  recomiendaIngest?: boolean;
+  webSourcesHit?: number;
+  fuentesConsultadas?: string[];
+  registroOficial?: ComplianceRegistroOficial;
+  dictamenPreliminar?: string;
+  datos?: {
+    regimen?: string | null;
+    certificaciones?: string[];
+    licenciasAmbientales?: string | null;
+    gestionResiduos?: string | null;
+    sanciones?: string;
+    expedientes?: string;
+    potenciaInstalada?: number | null;
+    volumenResiduoT?: number | null;
+    obligacionesIncumplidas?: string[];
+    estadoCompliance?: string;
+    perfilOperador?: string | null;
+    riesgoOPHS?: RiesgoOPHS;
+    [k: string]: unknown;
+  };
+  confianzaScore?: ConfianzaScore;
+}
+
+function complianceColor(c: string): string {
+  if (c === 'APTO') return '#34d399';
+  if (c === 'OBSERVACION') return '#fbbf24';
+  if (c === 'EXPEDIENTE_ACTIVO' || c === 'SANCIONADO') return '#f87171';
+  if (c === 'DESCONOCIDO') return '#94a3b8';
+  return '#94a3b8';
+}
+
+function dictamenColor(d: string): string {
+  if (d === 'CANDIDATO_VIABLE') return '#34d399';
+  if (d === 'REQUIERE_REVISION') return '#fbbf24';
+  if (d === 'NO_RECOMENDADO') return '#f87171';
+  return '#94a3b8';
+}
+
+function riesgoColor(r: string): string {
+  if (r === 'BAJO') return '#34d399';
+  if (r === 'MEDIO') return '#fbbf24';
+  if (r === 'ALTO') return '#f87171';
+  return '#94a3b8';
+}
+
+function scoreBarColor(score: number): string {
+  if (score >= 70) return '#34d399';
+  if (score >= 45) return '#fbbf24';
+  if (score >= 25) return '#fb923c';
+  return '#f87171';
+}
+
+const BREAKDOWN_LABELS: Record<keyof ConfianzaBreakdown, { label: string; max: number }> = {
+  fuentesWeb:          { label: 'Fuentes web',       max: 30 },
+  registroEncontrado:  { label: 'Registro oficial',  max: 20 },
+  datosVerificables:   { label: 'Datos verificables',max: 25 },
+  coherenciaLLM:       { label: 'Coherencia LLM',    max: 15 },
+  coberturaDatos:      { label: 'Cobertura campos',  max: 10 },
+};
+
+function ComplianceScanner() {
+  const [empresa, setEmpresa] = useState('');
+  const [sector, setSector] = useState('');
+  const [jurisdiccion, setJurisdiccion] = useState('España');
+  const [periodo, setPeriodo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('');
+  const [result, setResult] = useState<ComplianceResult | null>(null);
+  const [docs, setDocs] = useState<ComplianceDoc[]>([]);
+  const [ingestStatus, setIngestStatus] = useState('');
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [scoreOpen, setScoreOpen] = useState(false);
+
+  const token = localStorage.getItem('snfi.token') || localStorage.getItem('elvira_token') || '';
+
+  async function fetchDocs() {
+    try {
+      const r = await fetch('/api/elvira/compliance/documents', { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) setDocs(await r.json());
+    } catch { /* silencioso */ }
+  }
+
+  async function handleSearch() {
+    if (!empresa.trim()) { setStatus('Introduce el nombre de la empresa.'); return; }
+    setLoading(true);
+    setResult(null);
+    setStatus('Consultando fuentes regulatorias...');
+    setIngestStatus('');
+    try {
+      const r = await fetch('/api/elvira/compliance/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          empresa: empresa.trim(),
+          sector: sector.trim() || undefined,
+          jurisdiccion: jurisdiccion.trim() || 'España',
+          periodo: periodo.trim() || undefined,
+        }),
+      });
+      const text = await r.text();
+      let data: any;
+      try { data = JSON.parse(text); } catch { throw new Error(`Servidor no disponible (${r.status}). Comprueba que el servidor esté corriendo.`); }
+      if (!r.ok) throw new Error(data.error || 'Error en búsqueda');
+      setResult(data);
+      setStatus('');
+    } catch (ex: unknown) {
+      setStatus(`Error: ${ex instanceof Error ? ex.message : String(ex)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleIngest() {
+    if (!result) return;
+    setIngestStatus('Ingestando...');
+    try {
+      const r = await fetch('/api/elvira/compliance/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          empresa: result.empresa,
+          sector: result.sector || '',
+          jurisdiccion: result.jurisdiccion || 'España',
+          periodo: result.periodo,
+          fuente: result.fuente || 'Compliance Scanner · Rëff',
+          datos: result.datos || {},
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Error al ingestar');
+      setIngestStatus(`Ingestado · ID: ${data.doc.id}`);
+      fetchDocs();
+    } catch (ex: unknown) {
+      setIngestStatus(`Error: ${ex instanceof Error ? ex.message : String(ex)}`);
+    }
+  }
+
+  async function handleDeleteDoc(id: string) {
+    try {
+      await fetch(`/api/elvira/compliance/documents/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setDocs(prev => prev.filter(d => d.id !== id));
+    } catch { /* silencioso */ }
+  }
+
+  const datos = result?.datos;
+  const comp = datos?.estadoCompliance || '';
+  const conf = result?.confianza || '';
+  const dictamen = result?.dictamenPreliminar || '';
+  const reg = result?.registroOficial;
+  const ophs = datos?.riesgoOPHS;
+
+  const cs = result?.confianzaScore;
+  const confColor = conf === 'ALTA' ? '#34d399' : conf === 'MIXTA' ? '#fb923c' : conf === 'MEDIA' ? '#fbbf24' : '#94a3b8';
+  const scoreColor = cs ? scoreBarColor(cs.score) : '#94a3b8';
+
+  const regFields: [string, unknown][] = datos ? [
+    ['Régimen', datos.regimen],
+    ['Licencias ambientales', datos.licenciasAmbientales],
+    ['Gestión residuos', datos.gestionResiduos],
+    ['Sanciones', datos.sanciones],
+    ['Expedientes', datos.expedientes],
+    ['Potencia inst. (MW)', datos.potenciaInstalada],
+    ['Vol. residuo (T)', datos.volumenResiduoT],
+  ].filter(([, v]) => v != null && v !== '' && v !== '—' && v !== 'null') as [string, unknown][] : [];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* Search card */}
+      <Card style={{ padding: '20px 24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 200px 120px', gap: 10, alignItems: 'end' }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>EMPRESA / NODO</div>
+            <input
+              value={empresa}
+              onChange={e => setEmpresa(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              placeholder="ej. Vall Companys, Coren, Fuertes..."
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px', fontSize: 13,
+                background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
+                color: 'var(--text-primary)', outline: 'none', borderRadius: 0, fontFamily: 'inherit',
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>SECTOR</div>
+            <input
+              value={sector}
+              onChange={e => setSector(e.target.value)}
+              placeholder="ej. Cárnico, Agroalimentario, Industrial..."
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px', fontSize: 13,
+                background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
+                color: 'var(--text-primary)', outline: 'none', borderRadius: 0, fontFamily: 'inherit',
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>JURISDICCIÓN</div>
+            <input
+              value={jurisdiccion}
+              onChange={e => setJurisdiccion(e.target.value)}
+              placeholder="España"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px', fontSize: 13,
+                background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
+                color: 'var(--text-primary)', outline: 'none', borderRadius: 0, fontFamily: 'inherit',
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>PERIODO</div>
+            <input
+              value={periodo}
+              onChange={e => setPeriodo(e.target.value)}
+              placeholder="2025"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px', fontSize: 13,
+                background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.1)',
+                color: 'var(--text-primary)', outline: 'none', borderRadius: 0, fontFamily: 'inherit',
+              }}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 12 }}>
+          <button
+            onClick={handleSearch}
+            disabled={loading}
+            style={{
+              padding: '9px 22px', borderRadius: 0, fontSize: 12, fontWeight: 600, cursor: loading ? 'default' : 'pointer',
+              background: loading ? 'rgba(0,168,120,0.3)' : GOLD, color: '#000',
+              border: 'none', transition: 'opacity 0.2s', minWidth: 160,
+            }}
+          >
+            {loading ? 'Analizando...' : 'Escanear compliance'}
+          </button>
+          {status && (
+            <span style={{ fontSize: 11, color: status.startsWith('Error') ? '#f87171' : 'rgba(0,0,0,0.35)', fontFamily: "'IBM Plex Mono', monospace" }}>
+              {status}
+            </span>
+          )}
+        </div>
+        <div style={{ marginTop: 10, fontSize: 10, color: 'rgba(0,0,0,0.2)', fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1.7 }}>
+          Consulta CNMC resoluciones + BOE sanciones en tiempo real · Enriquecimiento LLM · Marco OPHS
+        </div>
+      </Card>
+
+      {/* Result */}
+      {result && (
+        <Card style={{ padding: '20px 24px' }}>
+
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+                {reg?.nombreRegistrado || result.empresa}
+              </span>
+              {result.sector && (
+                <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.35)', marginLeft: 10 }}>{result.sector}</span>
+              )}
+              {result.jurisdiccion && (
+                <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.25)', marginLeft: 8, fontFamily: "'IBM Plex Mono', monospace" }}>{result.jurisdiccion}</span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {dictamen && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '4px 10px', letterSpacing: '0.08em',
+                  color: dictamenColor(dictamen), border: `1px solid ${dictamenColor(dictamen)}50`,
+                  background: dictamenColor(dictamen) + '12', fontFamily: "'IBM Plex Mono', monospace",
+                }}>
+                  {dictamen.replace('_', ' ')}
+                </span>
+              )}
+              {comp && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '4px 10px', letterSpacing: '0.08em',
+                  color: complianceColor(comp), border: `1px solid ${complianceColor(comp)}50`,
+                  background: complianceColor(comp) + '12', fontFamily: "'IBM Plex Mono', monospace",
+                }}>
+                  {comp}
+                </span>
+              )}
+              {cs ? (
+                <button
+                  onClick={() => setScoreOpen(o => !o)}
+                  style={{
+                    fontSize: 10, fontWeight: 700, padding: '4px 10px', letterSpacing: '0.08em',
+                    color: scoreColor, border: `1px solid ${scoreColor}50`, background: scoreColor + '12',
+                    fontFamily: "'IBM Plex Mono', monospace", cursor: 'pointer',
+                  }}
+                  title="Ver desglose de puntuación"
+                >
+                  CONFIANZA: {cs.score}/100 · {cs.nivel}
+                </button>
+              ) : conf && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '4px 10px', letterSpacing: '0.08em',
+                  color: confColor, border: `1px solid ${confColor}50`, background: confColor + '12',
+                  fontFamily: "'IBM Plex Mono', monospace",
+                }}>
+                  CONFIANZA: {conf}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Fuentes consultadas */}
+          {result.fuentesConsultadas && result.fuentesConsultadas.length > 0 && (
+            <div style={{ marginBottom: 14, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 9, color: 'rgba(0,0,0,0.25)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: "'IBM Plex Mono', monospace" }}>Fuentes:</span>
+              {result.fuentesConsultadas.map((f, i) => (
+                <span key={i} style={{
+                  fontSize: 9, padding: '2px 8px', color: 'rgba(0,0,0,0.4)',
+                  border: '1px solid rgba(0,0,0,0.1)', fontFamily: "'IBM Plex Mono', monospace",
+                }}>{f}</span>
+              ))}
+              {(result.webSourcesHit ?? 0) > 0 && (
+                <span style={{ fontSize: 9, color: '#34d399', fontFamily: "'IBM Plex Mono', monospace" }}>
+                  · {result.webSourcesHit} fuente{result.webSourcesHit !== 1 ? 's' : ''} web consultada{result.webSourcesHit !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Puntuación de confianza */}
+          {cs && scoreOpen && (
+            <div style={{ marginBottom: 16, padding: '14px 16px', background: 'rgba(0,0,0,0.03)', border: `1px solid ${scoreColor}30` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: "'IBM Plex Mono', monospace" }}>
+                  Desglose puntuación de confianza
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: scoreColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+                    {cs.score}
+                    <span style={{ fontSize: 11, color: 'rgba(0,0,0,0.3)', fontWeight: 400 }}>/100</span>
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: scoreColor, fontFamily: "'IBM Plex Mono', monospace", padding: '2px 8px', border: `1px solid ${scoreColor}40` }}>
+                    {cs.nivel}
+                  </div>
+                </div>
+              </div>
+              {/* Score bar */}
+              <div style={{ height: 4, background: 'rgba(0,0,0,0.08)', marginBottom: 14, borderRadius: 2 }}>
+                <div style={{ height: '100%', width: `${cs.score}%`, background: scoreColor, borderRadius: 2, transition: 'width 0.4s ease' }} />
+              </div>
+              {/* Breakdown bars */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                {(Object.keys(BREAKDOWN_LABELS) as (keyof ConfianzaBreakdown)[]).map(k => {
+                  const { label, max } = BREAKDOWN_LABELS[k];
+                  const val = cs.breakdown[k];
+                  const pct = max > 0 ? (val / max) * 100 : 0;
+                  const c = scoreBarColor(val === 0 ? 0 : (val / max) * 100);
+                  return (
+                    <div key={k} style={{ display: 'grid', gridTemplateColumns: '140px 1fr 40px', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 10, color: 'rgba(0,0,0,0.4)', fontFamily: "'IBM Plex Mono', monospace", textAlign: 'right' }}>{label}</span>
+                      <div style={{ height: 3, background: 'rgba(0,0,0,0.06)', borderRadius: 2 }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: c, borderRadius: 2 }} />
+                      </div>
+                      <span style={{ fontSize: 10, color: c, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700 }}>{val}/{max}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Factores */}
+              <div style={{ borderTop: '1px solid rgba(0,0,0,0.07)', paddingTop: 10 }}>
+                <div style={{ fontSize: 9, color: 'rgba(0,0,0,0.25)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: "'IBM Plex Mono', monospace", marginBottom: 6 }}>Señales detectadas</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {cs.factores.map((f, i) => (
+                    <div key={i} style={{ fontSize: 10, color: 'rgba(0,0,0,0.45)', fontFamily: "'IBM Plex Mono', monospace" }}>
+                      · {f}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Riesgo OPHS */}
+          {ophs && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.07)' }}>
+              <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Riesgo OPHS
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {(['ops', 'paia', 'herzog', 'sentinel'] as (keyof RiesgoOPHS)[]).map(k => (
+                  <div key={k} style={{ textAlign: 'center', padding: '8px 6px', background: riesgoColor(ophs[k]) + '10', border: `1px solid ${riesgoColor(ophs[k])}30` }}>
+                    <div style={{ fontSize: 9, color: 'rgba(0,0,0,0.3)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>{k.toUpperCase()}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: riesgoColor(ophs[k]) }}>{ophs[k]}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Registro oficial */}
+          {reg?.encontrado && (
+            <div style={{ marginBottom: 14, padding: '12px 14px', background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.15)' }}>
+              <div style={{ fontSize: 10, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Datos de registro
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                {reg.nif && <FieldPill label="NIF / CIF" value={reg.nif} highlight={false} />}
+                {reg.domicilio && <FieldPill label="Domicilio" value={reg.domicilio} highlight={false} />}
+                {reg.fechaAltaRegistro && <FieldPill label="Alta en registro" value={reg.fechaAltaRegistro} highlight={false} />}
+                {reg.registros && reg.registros.length > 0 && <FieldPill label="Registros" value={reg.registros.join(', ')} highlight={false} />}
+              </div>
+            </div>
+          )}
+
+          {/* Certificaciones */}
+          {datos?.certificaciones && datos.certificaciones.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Certificaciones
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {datos.certificaciones.map((c, i) => (
+                  <span key={i} style={{
+                    fontSize: 11, padding: '3px 10px', color: '#34d399',
+                    border: '1px solid rgba(52,211,153,0.3)', background: 'rgba(52,211,153,0.06)',
+                    fontFamily: "'IBM Plex Mono', monospace",
+                  }}>{c}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Perfil operador */}
+          {datos?.perfilOperador && (
+            <div style={{ marginBottom: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.07)' }}>
+              <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5, fontFamily: "'IBM Plex Mono', monospace" }}>Perfil regulatorio</div>
+              <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.6)', lineHeight: 1.65 }}>{datos.perfilOperador}</div>
+            </div>
+          )}
+
+          {/* Campos regulatorios */}
+          {regFields.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Contexto regulatorio
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+                {regFields.map(([k, v]) => (
+                  <FieldPill key={k} label={k} value={String(v)} highlight={false} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Obligaciones incumplidas */}
+          {datos?.obligacionesIncumplidas && datos.obligacionesIncumplidas.length > 0 && (
+            <div style={{ marginBottom: 12, padding: '10px 12px', background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)' }}>
+              <div style={{ fontSize: 10, color: '#f87171', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Obligaciones incumplidas</div>
+              {datos.obligacionesIncumplidas.map((o, i) => (
+                <div key={i} style={{ fontSize: 12, color: 'rgba(0,0,0,0.65)', marginBottom: 3 }}>· {o}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Notas */}
+          {result.notas && (
+            <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', lineHeight: 1.65, marginBottom: 14, padding: '10px 12px', background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.06)' }}>
+              {result.notas}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <button
+              onClick={handleIngest}
+              style={{
+                padding: '8px 20px', borderRadius: 0, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                background: GOLD, color: '#000', border: 'none',
+              }}
+            >
+              Guardar en base de conocimiento
+            </button>
+            {ingestStatus && (
+              <span style={{ fontSize: 11, color: ingestStatus.startsWith('Error') ? '#f87171' : '#34d399', fontFamily: "'IBM Plex Mono', monospace" }}>
+                {ingestStatus}
+              </span>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Docs guardados */}
+      <Card style={{ padding: '16px 24px' }}>
+        <button
+          onClick={() => { setDocsOpen(o => !o); if (!docsOpen) fetchDocs(); }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(0,0,0,0.45)', fontSize: 12, padding: 0 }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ transform: docsOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>
+            <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Base de conocimiento compliance {docs.length > 0 && `(${docs.length})`}
+          </span>
+        </button>
+        {docsOpen && (
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {docs.length === 0
+              ? <span style={{ fontSize: 12, color: 'rgba(0,0,0,0.25)', fontStyle: 'italic' }}>Sin documentos guardados aún.</span>
+              : docs.slice(0, 50).map(d => {
+                  const estadoComp = (d.datos as any)?.estadoCompliance || '';
+                  return (
+                    <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.07)', flexWrap: 'wrap', gap: 6 }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{d.empresa}</span>
+                        {d.sector && <span style={{ fontSize: 10, color: 'rgba(0,0,0,0.3)', marginLeft: 8 }}>{d.sector}</span>}
+                        <span style={{ fontSize: 10, color: 'rgba(0,0,0,0.25)', marginLeft: 8, fontFamily: "'IBM Plex Mono', monospace" }}>{d.periodo || ''}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {estadoComp && (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: complianceColor(estadoComp), border: `1px solid ${complianceColor(estadoComp)}40`, padding: '1px 7px', fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '0.07em' }}>
+                            {estadoComp}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 10, color: 'rgba(0,0,0,0.25)' }}>{new Date(d.ingestedAt).toLocaleDateString('es-ES')}</span>
+                        <button
+                          onClick={() => handleDeleteDoc(d.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(0,0,0,0.2)', fontSize: 14, lineHeight: 1, padding: '0 2px', transition: 'color 0.2s' }}
+                          onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(0,0,0,0.2)')}
+                          title="Eliminar"
+                        >×</button>
+                      </div>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ─── Main dashboard ───────────────────────────────────────────────────────────
+
 export function CaptadorDashboard({ agent, onBack }: Props) {
   const [nav, setNav] = useState<NavSection>('panel');
   const [sheets, setSheets] = useState<CrmSheet[]>(() => loadSheets());
@@ -3742,6 +4339,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
     { id: 'analizador', label: 'Analizador', icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="7.5" r="5.5" stroke="currentColor" strokeWidth="1.2"/><path d="M7.5 4v3.5l2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
     { id: 'emails', label: 'Correos', icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="3" width="13" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2"/><path d="M1 5l6.5 4L14 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
     { id: 'analytics', label: 'Analytics', icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M2 12l3-4 3 2 3-6 2 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+    { id: 'compliance', label: 'Compliance Scanner', icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M2 7.5h2M11 7.5h2M7.5 2v2M7.5 11v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><circle cx="7.5" cy="7.5" r="3" stroke="currentColor" strokeWidth="1.2"/><circle cx="7.5" cy="7.5" r="1" fill="currentColor"/></svg> },
   ];
 
   return (
@@ -3814,6 +4412,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
             {nav === 'analizador' && 'Analizador'}
             {nav === 'emails' && 'Correos de contacto'}
             {nav === 'analytics' && 'Analytics'}
+            {nav === 'compliance' && 'Compliance Scanner'}
           </h1>
           <p style={{ fontSize: 13, color: 'rgba(0,0,0,0.35)', marginTop: 4, margin: 0 }}>
             {nav === 'panel' && 'Vista general del pipeline comercial S-NFI'}
@@ -3823,6 +4422,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
             {nav === 'analizador' && 'Auditoría profunda W·I·S·M·E·R + Baremo Herzog antes de la primera toma de contacto'}
             {nav === 'emails' && 'Genera correos personalizados 10/10 para cada empresa del CRM'}
             {nav === 'analytics' && 'Métricas y rendimiento del proceso comercial'}
+            {nav === 'compliance' && 'Perfil regulatorio y de compliance · Marco OPHS · Fuentes públicas CNMC + BOE · Base de conocimiento interna'}
           </p>
         </div>
 
@@ -3831,6 +4431,7 @@ export function CaptadorDashboard({ agent, onBack }: Props) {
         {nav === 'buscador' && <Buscador onAddTocrm={addTocrm} />}
         {nav === 'li-contacts' && <LiContacts />}
         {nav === 'emails' && <Emails leads={leads} />}
+        {nav === 'compliance' && <ComplianceScanner />}
 
         {nav === 'crm' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>

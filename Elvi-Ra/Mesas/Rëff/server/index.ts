@@ -9,6 +9,7 @@ import { signToken } from './auth.js';
 import chatRoutes from './routes/chat.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import complianceRoutes from './routes/compliance.routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +56,7 @@ app.get('/api/guest-token', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/elvira/compliance', complianceRoutes);
 
 if (NODE_ENV === 'production') {
   const clientDir = path.resolve(__dirname, '../../dist/client');

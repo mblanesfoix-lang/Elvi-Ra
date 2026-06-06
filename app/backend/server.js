@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { callLLM, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M } from './llm.js';
+import { callLLM, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M, ANTHROPIC_MODEL } from './llm.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -34,6 +34,10 @@ if (!fs.existsSync(ELVIRA_FILE)) fs.writeFileSync(ELVIRA_FILE, JSON.stringify({
     sentinel: { events: [] },
     herzog:   { audits: [] },
   },
+  cnmc: {
+    documents: [],
+    auditLog:  [],
+  },
   updatedAt: new Date().toISOString(),
 }, null, 2));
 
@@ -56,6 +60,20 @@ const USERS = {
   'Marc Blanes': { password: 'Marc2005', role: 'admin' },
   'Nour':        { password: 'Nour 2026', role: 'admin' },
 };
+
+/* ---- Event Bus ring-buffer (declared early so login/logout hooks can use busEmit) ---- */
+const MAX_BUS_EVENTS = 500;
+const busEvents = [];
+const sseClients = new Set();
+
+function busEmit(event) {
+  busEvents.unshift(event);
+  if (busEvents.length > MAX_BUS_EVENTS) busEvents.length = MAX_BUS_EVENTS;
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of sseClients) {
+    try { client.write(payload); } catch { sseClients.delete(client); }
+  }
+}
 
 const app = express();
 app.use(cors());
@@ -125,11 +143,22 @@ app.post('/api/login', (req, res) => {
   if (!u || u.password !== password) return res.status(401).json({ error: 'Credenciales inválidas' });
   const token = crypto.randomBytes(24).toString('hex');
   SESSIONS.set(token, { user: username, role: u.role, exp: Date.now() + 1000 * 60 * 60 * 8 });
+  // Bus hook: auth event (busEmit defined later — deferred call safe because Express routes run after all top-level code)
+  setImmediate(() => busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'SENTINEL', dest: 'ELVI-RA', type: 'event', state: 'COMPLETED',
+    label: `LOGIN OK · ${username}`, payload: { user: username, role: u.role }, user: username,
+  }));
   res.json({ token, user: username, role: u.role });
 });
 app.post('/api/logout', auth, (req, res) => {
   const h = req.headers.authorization || '';
   SESSIONS.delete(h.slice(7));
+  setImmediate(() => busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'SENTINEL', dest: 'ELVI-RA', type: 'event', state: 'COMPLETED',
+    label: `LOGOUT · ${req.user}`, payload: { user: req.user }, user: req.user,
+  }));
   res.json({ ok: true });
 });
 app.get('/api/me', auth, (req, res) => res.json({ user: req.user, role: req.role }));
@@ -893,6 +922,501 @@ app.post('/api/elvira/ophs/score', auth, (req, res) => {
   res.json(dictamen);
 });
 
+/* ---------- OPHS Webhook · puerto de integración externa ---------- */
+/*
+ * Receptor de eventos/scores OPHS enviados por sistemas externos.
+ * Autenticación: Bearer token de Elvi-Ra (mismo auth middleware).
+ * Cuando Pactvm Viridi / sistema OPHS real exista, apunta aquí su webhook.
+ *
+ * Payload esperado:
+ *   { type: "event"|"score", source: "string", payload: {...} }
+ *
+ * Los eventos quedan en state.ophs.webhookEvents (últimos 200).
+ * Los scores de tipo "score" también corren por el mismo pipeline de /ophs/score
+ * si incluyen el campo "vars".
+ */
+app.get('/api/elvira/ophs/webhook', auth, (req, res) => {
+  const state = readElvira();
+  if (!state.ophs.webhookEvents) state.ophs.webhookEvents = [];
+  res.json({
+    status: 'active',
+    endpoint: '/api/elvira/ophs/webhook',
+    events: state.ophs.webhookEvents.slice(0, 50),
+    description: 'Puerto OPHS — receptor webhook para integración externa. POST aquí para enviar eventos o scores.',
+  });
+});
+
+app.post('/api/elvira/ophs/webhook', auth, (req, res) => {
+  const b = req.body || {};
+  const type    = String(b.type || 'event');   // "event" | "score"
+  const source  = String(b.source || 'external');
+  const payload = b.payload && typeof b.payload === 'object' ? b.payload : {};
+
+  const state = readElvira();
+  if (!state.ophs.webhookEvents) state.ophs.webhookEvents = [];
+
+  const entry = {
+    id: crypto.randomUUID(),
+    type,
+    source,
+    payload,
+    receivedAt: new Date().toISOString(),
+    user: req.user,
+  };
+
+  // Si es un score con vars, ejecutar el pipeline OPHS y adjuntar dictamen
+  if (type === 'score' && payload.vars && typeof payload.vars === 'object') {
+    const w  = state.ophs.weights;
+    const th = state.ophs.threshold;
+    const keys = ['W','I','S','M','E','R','B','G','U2'];
+    const flags = payload.flags || {};
+    const clean = {};
+    let total = 0;
+    for (const k of keys) {
+      const v = Math.max(0, Math.min(100, Number(payload.vars[k] ?? 0)));
+      clean[k] = v;
+      total += (w[k] || 0) * v;
+    }
+    let ophs = Math.round(total);
+    let clasificacion = 'NO_CANDIDATO';
+    let razonDescarte = '';
+    if (flags.biogas)           { ophs = Math.min(ophs, 30); razonDescarte = 'Dependencia biogás/anaerobia'; }
+    else if (flags.cnmcSancion) { ophs = Math.min(ophs, 25); razonDescarte = 'Sanción CNMC previa'; }
+    else if (clean.G === 0)     { ophs = Math.min(ophs, 20); razonDescarte = 'Gobernanza tóxica (Herzog bloquea)'; }
+    if (!razonDescarte) {
+      if (ophs >= th.estrategico) clasificacion = 'ESTRATEGICO';
+      else if (ophs >= th.operativo) clasificacion = 'OPERATIVO';
+    }
+    const dictamen = {
+      id: crypto.randomUUID(),
+      nodo: String(payload.nodo || '').trim(),
+      vars: clean,
+      flags,
+      ophs,
+      clasificacion,
+      razonDescarte,
+      createdAt: new Date().toISOString(),
+      user: req.user,
+      viaWebhook: true,
+      webhookSource: source,
+    };
+    state.ophs.dictamenes.unshift(dictamen);
+    state.ophs.dictamenes = state.ophs.dictamenes.slice(0, 100);
+    entry.dictamen = dictamen;
+  }
+
+  state.ophs.webhookEvents.unshift(entry);
+  state.ophs.webhookEvents = state.ophs.webhookEvents.slice(0, 200);
+  writeElvira(state);
+  res.status(201).json(entry);
+});
+
+/* ============================================================
+   CNMC · Embudo Legal — ingesta documental regulatoria + auditoría de asimetría
+   ============================================================ */
+
+/* GET /api/elvira/cnmc/documents — lista documentos ingestados */
+app.get('/api/elvira/cnmc/documents', auth, (req, res) => {
+  const state = readElvira();
+  if (!state.cnmc) state.cnmc = { documents: [], auditLog: [] };
+  res.json(state.cnmc.documents.slice(0, 100));
+});
+
+/*
+ * POST /api/elvira/cnmc/ingest
+ * Acepta metadatos + datos tabulados de un informe regulatorio CNMC.
+ * PDFs reales se procesarán cuando el LLM local esté operativo; por ahora
+ * se recibe el extracto ya parseado (JSON) junto con metadatos de fuente.
+ *
+ * Body esperado:
+ * {
+ *   empresa:   "Iberdrola S.A.",
+ *   cif:       "A95653077",           // opcional
+ *   periodo:   "2023",
+ *   fuente:    "Informe Anual CNMC 2023 — Actividad Eléctrica",
+ *   url:       "https://...",          // opcional, para trazabilidad
+ *   datos: {                           // variables extraídas del informe
+ *     bssMwh:        number | null,
+ *     resiliencia:   string | null,
+ *     sanciones:     string | null,    // "ninguna" | "expediente X" | ...
+ *     expedientes:   string | null,
+ *     [key: string]: any               // cualquier otro parámetro del informe
+ *   }
+ * }
+ */
+app.post('/api/elvira/cnmc/ingest', auth, (req, res) => {
+  const b = req.body || {};
+  const empresa  = String(b.empresa  || '').trim();
+  const periodo  = String(b.periodo  || '').trim();
+  const fuente   = String(b.fuente   || '').trim();
+  if (!empresa || !fuente) return res.status(400).json({ error: 'empresa y fuente requeridos' });
+
+  const doc = {
+    id:         crypto.randomUUID(),
+    dataSource: 'CNMC',                     // Dato Jurídico — prioridad absoluta
+    empresa,
+    cif:        String(b.cif || '').trim() || null,
+    periodo,
+    fuente,
+    url:        String(b.url || '').trim() || null,
+    datos:      b.datos && typeof b.datos === 'object' ? b.datos : {},
+    ingestedAt: new Date().toISOString(),
+    ingestedBy: req.user,
+  };
+
+  const state = readElvira();
+  if (!state.cnmc) state.cnmc = { documents: [], auditLog: [] };
+  state.cnmc.documents.unshift(doc);
+  state.cnmc.documents = state.cnmc.documents.slice(0, 500);
+  writeElvira(state);
+
+  busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'ELVI-RA', dest: 'REFF', type: 'request', state: 'PENDING',
+    label: `CNMC INGEST · ${empresa} · ${periodo}`,
+    payload: { docId: doc.id, empresa, periodo, fuente, dataSource: 'CNMC' },
+    user: req.user,
+  });
+
+  res.status(201).json(doc);
+});
+
+/*
+ * POST /api/elvira/cnmc/audit/:companyId
+ * Cruza el último documento CNMC ingestado para esa empresa (por nombre)
+ * contra los datos del nodo en el CRM.
+ * Si detecta asimetría relevante:
+ *   — marca la empresa con cnmcAudit: { status:'FAILED', ... }
+ *   — pone opsBlocked: true en la empresa
+ *   — emite evento bus REFF→OPHS state=BLOCKED
+ *   — escribe evento Sentinel con huella forense
+ *
+ * Body opcional: { docId } para forzar un documento específico.
+ */
+app.post('/api/elvira/cnmc/audit/:companyId', auth, (req, res) => {
+  const db    = readDB();
+  const state = readElvira();
+  if (!state.cnmc) state.cnmc = { documents: [], auditLog: [] };
+
+  // Find company across all user sheets
+  let targetCompany = null;
+  let targetSheet   = null;
+  const uBlob = db[req.user];
+  if (uBlob) {
+    for (const s of (uBlob.sheets || [])) {
+      const c = s.companies.find(x => x.id === req.params.companyId);
+      if (c) { targetCompany = c; targetSheet = s; break; }
+    }
+  }
+  if (!targetCompany) return res.status(404).json({ error: 'empresa no encontrada' });
+
+  // Find matching CNMC document — by docId (body) or by empresa name match
+  let doc = null;
+  const { docId } = req.body || {};
+  if (docId) {
+    doc = state.cnmc.documents.find(d => d.id === docId);
+  } else {
+    const nodo = (targetCompany.nodo || '').toLowerCase();
+    doc = state.cnmc.documents.find(d =>
+      d.empresa.toLowerCase().includes(nodo) || nodo.includes(d.empresa.toLowerCase())
+    );
+  }
+  if (!doc) return res.status(404).json({ error: 'no hay documento CNMC ingestado para esta empresa' });
+
+  const now = new Date().toISOString();
+  const cnmcDatos = doc.datos || {};
+
+  // --- Asymmetry detection ---
+  const findings = [];
+
+  // BSS / Resilience
+  if (cnmcDatos.bssMwh != null && targetCompany.bssMwh != null) {
+    const delta = Number(targetCompany.bssMwh) - Number(cnmcDatos.bssMwh);
+    const pct   = cnmcDatos.bssMwh !== 0 ? Math.abs(delta / Number(cnmcDatos.bssMwh)) : 0;
+    if (pct > 0.10 && delta > 0) {
+      findings.push({
+        parametro:       'bssMwh',
+        valorDeclarado:  targetCompany.bssMwh,
+        valorCnmc:       cnmcDatos.bssMwh,
+        delta,
+        nivel:           'INFRACCION_NIVEL_1',
+        descripcion:     `Empresa declara ${targetCompany.bssMwh} MWh BSS; CNMC reporta ${cnmcDatos.bssMwh} MWh. Delta +${delta.toFixed(2)} MWh (${(pct*100).toFixed(1)}%)`,
+      });
+    }
+  }
+
+  // Sanciones / expedientes — cualquier mención no nula en CNMC y estado OK en CRM
+  if (cnmcDatos.sanciones && cnmcDatos.sanciones !== 'ninguna' && targetCompany.cnmc === 'OK') {
+    findings.push({
+      parametro:       'sanciones',
+      valorDeclarado:  'OK (CRM)',
+      valorCnmc:       cnmcDatos.sanciones,
+      delta:           'presencia de expediente no declarado',
+      nivel:           'INFRACCION_NIVEL_2',
+      descripcion:     `CNMC registra: "${cnmcDatos.sanciones}". Empresa figura como OK en CRM.`,
+    });
+  }
+  if (cnmcDatos.expedientes && cnmcDatos.expedientes !== 'ninguno' && targetCompany.cnmc === 'OK') {
+    findings.push({
+      parametro:       'expedientes',
+      valorDeclarado:  'OK (CRM)',
+      valorCnmc:       cnmcDatos.expedientes,
+      delta:           'expediente activo no declarado',
+      nivel:           'INFRACCION_NIVEL_2',
+      descripcion:     `CNMC registra expediente activo: "${cnmcDatos.expedientes}". Empresa figura como OK en CRM.`,
+    });
+  }
+
+  // Extra custom fields passed in datos — numeric check >10% delta
+  for (const [key, cnmcVal] of Object.entries(cnmcDatos)) {
+    if (['bssMwh','sanciones','expedientes'].includes(key)) continue;
+    const crmVal = targetCompany[key];
+    if (crmVal != null && cnmcVal != null && typeof cnmcVal === 'number' && typeof crmVal === 'number') {
+      const delta = Number(crmVal) - Number(cnmcVal);
+      const pct   = cnmcVal !== 0 ? Math.abs(delta / cnmcVal) : 0;
+      if (pct > 0.10 && delta > 0) {
+        findings.push({
+          parametro:       key,
+          valorDeclarado:  crmVal,
+          valorCnmc:       cnmcVal,
+          delta,
+          nivel:           'INFRACCION_NIVEL_1',
+          descripcion:     `${key}: declarado ${crmVal}, CNMC reporta ${cnmcVal}. Delta +${delta.toFixed(2)} (${(pct*100).toFixed(1)}%)`,
+        });
+      }
+    }
+  }
+
+  const hasFailed = findings.some(f => f.nivel === 'INFRACCION_NIVEL_1' || f.nivel === 'INFRACCION_NIVEL_2');
+  const auditStatus = hasFailed ? 'FAILED' : findings.length > 0 ? 'REVIEW' : 'PASSED';
+  const worstNivel  = findings.reduce((worst, f) => {
+    const order = { INFRACCION_NIVEL_1: 3, INFRACCION_NIVEL_2: 2, INFRACCION_NIVEL_3: 1 };
+    return (order[f.nivel] || 0) > (order[worst] || 0) ? f.nivel : worst;
+  }, 'SIN_ASIMETRIA');
+
+  const auditRecord = {
+    id:          crypto.randomUUID(),
+    companyId:   targetCompany.id,
+    nodo:        targetCompany.nodo,
+    docId:       doc.id,
+    fuente:      doc.fuente,
+    periodo:     doc.periodo,
+    status:      auditStatus,       // PASSED | FAILED | REVIEW
+    nivel:       worstNivel,
+    findings,
+    opsBlocked:  hasFailed,
+    auditedAt:   now,
+    auditedBy:   req.user,
+  };
+
+  // --- Persist audit result on company ---
+  targetCompany.cnmcAudit  = auditRecord;
+  targetCompany.opsBlocked = hasFailed;
+  if (hasFailed && targetCompany.cnmc === 'OK') targetCompany.cnmc = 'RIESGO';
+  writeDB(db);
+
+  // --- Persist in auditLog ---
+  state.cnmc.auditLog.unshift(auditRecord);
+  state.cnmc.auditLog = state.cnmc.auditLog.slice(0, 200);
+  writeElvira(state);
+
+  // --- Bus event: REFF → OPHS ---
+  const busState = hasFailed ? 'BLOCKED' : 'COMPLETED';
+  const busLabel = hasFailed
+    ? `CNMC_AUDIT_FAILED · ${targetCompany.nodo} · ${findings[0]?.parametro || '?'} · OPS BLOQUEADOS`
+    : `CNMC_AUDIT_PASSED · ${targetCompany.nodo}`;
+  busEmit({
+    id: crypto.randomUUID(), ts: now, seq: busEvents.length + 1,
+    origin: 'REFF', dest: 'OPHS', type: 'response', state: busState,
+    label: busLabel,
+    payload: {
+      cnmcAudit: auditStatus,
+      nodo:      targetCompany.nodo,
+      findings:  findings.slice(0, 5),
+      opsBlocked: hasFailed,
+    },
+    user: req.user,
+  });
+
+  // --- Sentinel forensic log (only on failure) ---
+  if (hasFailed) {
+    const primaryFinding = findings.find(f => f.nivel === 'INFRACCION_NIVEL_1') || findings[0];
+    const sentinelEvent = {
+      id:        crypto.randomUUID(),
+      type:      'cnmc_fraud',
+      subject:   targetCompany.nodo,
+      detail:    `CNMC_AUDIT_FAILED · Parámetro: ${primaryFinding.parametro} · Declarado: ${primaryFinding.valorDeclarado} · CNMC: ${primaryFinding.valorCnmc} · Delta: ${primaryFinding.delta} · Fuente: ${doc.fuente} · Periodo: ${doc.periodo}`,
+      severity:  'critical',
+      createdAt: now,
+      forensic: {
+        auditId:        auditRecord.id,
+        docId:          doc.id,
+        fuente:         doc.fuente,
+        periodo:        doc.periodo,
+        parametro:      primaryFinding.parametro,
+        valorDeclarado: primaryFinding.valorDeclarado,
+        valorCnmc:      primaryFinding.valorCnmc,
+        delta:          primaryFinding.delta,
+        nivel:          primaryFinding.nivel,
+        ts:             now,
+      },
+    };
+    state.bridges.sentinel.events.unshift(sentinelEvent);
+    state.bridges.sentinel.events = state.bridges.sentinel.events.slice(0, 200);
+    writeElvira(state);
+
+    // Also emit to bus so Observer picks it up
+    busEmit({
+      id: crypto.randomUUID(), ts: now, seq: busEvents.length + 1,
+      origin: 'SENTINEL', dest: 'ELVI-RA', type: 'alert', state: 'BLOCKED',
+      label: `HUELLA FORENSE · ${targetCompany.nodo} · ${primaryFinding.parametro}`,
+      payload: sentinelEvent.forensic,
+      user: req.user,
+    });
+  }
+
+  res.status(200).json(auditRecord);
+});
+
+/* ============================================================
+   CNMC · Buscador híbrido: API real numeracionyoperadores.cnmc.es + LLM
+   1) Consulta la API pública CNMC para datos de registro actualizados
+   2) El LLM enriquece con contexto regulatorio usando los datos reales
+   ============================================================ */
+
+const CNMC_API_BASE = 'https://numeracionyoperadores.cnmc.es';
+
+async function fetchCnmcOperadores(nombre) {
+  const { default: https } = await import('node:https');
+  const encoded = encodeURIComponent(nombre);
+  const url = `${CNMC_API_BASE}/api/operador/get_busqueda_operadores?nombre=${encoded}`;
+  return new Promise((resolve) => {
+    https.get(url, { headers: { 'User-Agent': 'Elvi-Ra/1.0 (S-NFI Corp; regulatorio)', 'Accept': 'application/json' } }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(d)); }
+        catch { resolve([]); }
+      });
+    }).on('error', () => resolve([]));
+  });
+}
+
+const CNMC_ENRICH_SYSTEM = `Eres el módulo "CNMC Intelligence" del agente Rëff dentro de Elvi-Ra.
+
+Se te proporcionan datos REALES y ACTUALIZADOS del Registro Oficial de Operadores de la CNMC (numeracionyoperadores.cnmc.es) sobre una empresa. Tu tarea es:
+
+1. Interpretar los datos de registro oficial (servicios autorizados, ámbito, fechas de resolución)
+2. Añadir contexto regulatorio adicional que conozcas: expedientes sancionadores, RIPRE/RAIPRE, informes CNMC, régimen retributivo energético si aplica
+3. Evaluar el perfil de compliance según el marco OPHS de S-NFI
+
+DATOS REALES DE REGISTRO CNMC: se proporcionan en el prompt del usuario como JSON.
+
+VARIABLES A COMPLETAR (combina datos reales + tu conocimiento):
+- registroOficial: resumen de servicios autorizados por CNMC (extrae de los datos reales)
+- servicios: lista de servicios y ámbitos registrados
+- sanciones: "ninguna conocida" o descripción de expediente sancionador si lo conoces
+- expedientes: "ninguno conocido" o descripción
+- regimen: régimen retributivo energético si aplica (mercado libre, RECORE, prima regulada)
+- potenciaInstalada: MW registrados si aplica
+- volumenResiduoT: toneladas residuo orgánico si aplica
+- obligacionesIncumplidas: lista de incumplimientos conocidos
+- estadoCompliance: "APTO" | "OBSERVACION" | "EXPEDIENTE_ACTIVO" | "SANCIONADO"
+- perfilOperador: descripción del perfil como operador CNMC relevante para S-NFI
+
+REGLA CRÍTICA: Los datos del registro oficial son VERIFICADOS y tienen prioridad absoluta. Lo que añades del LLM marca confianza MEDIA o BAJA. No inventes datos — usa null y explica en notas.
+
+SALIDA: SOLO JSON válido, sin markdown:
+{
+  "empresa": "string",
+  "cif": "string | null",
+  "periodo": "string",
+  "fuente": "string",
+  "confianza": "ALTA | MEDIA | BAJA",
+  "registroOficial": { "encontrado": boolean, "nombreRegistrado": "string | null", "nif": "string | null", "domicilio": "string | null", "fechaAltaRegistro": "string | null", "totalServicios": number },
+  "datos": {
+    "servicios": [{"nombre": "string", "tipo": "string", "ambito": "string", "fechaResolucion": "string"}],
+    "sanciones": "string",
+    "expedientes": "string",
+    "regimen": "string | null",
+    "potenciaInstalada": number | null,
+    "volumenResiduoT": number | null,
+    "obligacionesIncumplidas": [],
+    "estadoCompliance": "APTO | OBSERVACION | EXPEDIENTE_ACTIVO | SANCIONADO",
+    "perfilOperador": "string | null"
+  },
+  "notas": "string",
+  "recomiendaIngest": boolean
+}`;
+
+app.post('/api/elvira/cnmc/search', auth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const empresa = String(b.empresa || '').trim();
+    const cif     = String(b.cif     || '').trim();
+    const periodo = String(b.periodo || new Date().getFullYear().toString()).trim();
+
+    if (!empresa) return res.status(400).json({ error: 'empresa requerida' });
+
+    // Step 1: fetch real CNMC registry data
+    const cnmcResults = await fetchCnmcOperadores(empresa);
+    const found = cnmcResults.length > 0;
+    const cnmcDataStr = found
+      ? JSON.stringify(cnmcResults.slice(0, 5), null, 2)
+      : 'No se encontraron resultados en el registro oficial de operadores CNMC para esta empresa.';
+
+    // Step 2: LLM enriches with regulatory context using real data as base
+    const userPrompt = `EMPRESA A INVESTIGAR: ${empresa}${cif ? ` · CIF: ${cif}` : ''}
+PERIODO DE INTERÉS: ${periodo}
+
+DATOS REALES DEL REGISTRO OFICIAL CNMC (numeracionyoperadores.cnmc.es):
+${cnmcDataStr}
+
+Interpreta estos datos y enriquece con contexto regulatorio adicional (sanciones, RIPRE/RAIPRE, régimen energético, perfil OPHS).
+Si hay múltiples resultados, analiza el más relevante o el que coincida mejor con la búsqueda.
+SOLO JSON.`;
+
+    const raw = await callLLMTracked(CNMC_ENRICH_SYSTEM, userPrompt, 3000, req.user, 'cnmc_search');
+    const parsed = extractJson(raw);
+
+    // Override registroOficial with verified data if LLM missed it
+    if (found && (!parsed.registroOficial || !parsed.registroOficial.encontrado)) {
+      const first = cnmcResults[0];
+      parsed.registroOficial = {
+        encontrado: true,
+        nombreRegistrado: first.nombre || null,
+        nif: first.nif || null,
+        domicilio: first.domicilio || null,
+        fechaAltaRegistro: first.fecha_notif_ini || null,
+        totalServicios: (first.servicios || []).length,
+      };
+      parsed.confianza = parsed.confianza === 'BAJA' ? 'MEDIA' : parsed.confianza;
+    } else if (!found) {
+      parsed.registroOficial = { encontrado: false, nombreRegistrado: null, nif: null, domicilio: null, fechaAltaRegistro: null, totalServicios: 0 };
+    }
+
+    busEmit({
+      id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+      origin: 'REFF', dest: 'ELVI-RA', type: 'response', state: 'COMPLETED',
+      label: `CNMC SEARCH · ${empresa} · ${periodo} · registro:${found ? 'ENCONTRADO' : 'NO_ENCONTRADO'} · confianza: ${parsed.confianza || '?'}`,
+      payload: { empresa, periodo, registroEncontrado: found, confianza: parsed.confianza, estadoCompliance: parsed.datos?.estadoCompliance },
+      user: req.user,
+    });
+
+    res.json({
+      empresa,
+      cif: cif || null,
+      periodo,
+      searchedAt: new Date().toISOString(),
+      cnmcResultCount: cnmcResults.length,
+      ...parsed,
+    });
+  } catch (ex) {
+    console.error('[cnmc/search]', ex);
+    res.status(500).json({ error: ex.message || 'error búsqueda CNMC' });
+  }
+});
+
 /* ---------- Sentinel bridge (mock) ---------- */
 /* Espejo de eventos de identidad/acceso. Real Sentinel publicará aquí. */
 app.get('/api/elvira/sentinel/events', auth, (req, res) => {
@@ -995,6 +1519,600 @@ app.delete('/api/elvira/tcontroler/reset', auth, (req, res) => {
   state.systems.tcontroler.tokensUsed = 0;
   writeElvira(state);
   res.json({ ok: true, resetAt: new Date().toISOString() });
+});
+
+/* ============================================================
+   EVENT BUS · Bus de eventos central
+   Flujo: Emisor → POST /api/bus/emit → ring-buffer → SSE push → Observer
+
+   Estados de paquete:
+     PENDING | ROUTING | VALIDATING | BLOCKED | APPROVED | COMPLETED
+   ============================================================ */
+
+/* GET /api/bus/stream — SSE endpoint, Observer lo abre */
+app.get('/api/bus/stream', auth, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx: disable buffering
+  res.flushHeaders();
+
+  // Send backlog (last 100 events so Observer shows history on connect)
+  const backlog = busEvents.slice(0, 100).reverse();
+  for (const ev of backlog) {
+    res.write(`data: ${JSON.stringify(ev)}\n\n`);
+  }
+
+  sseClients.add(res);
+
+  // Heartbeat every 25s to keep connection alive through proxies
+  const hb = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch { clearInterval(hb); sseClients.delete(res); }
+  }, 25000);
+
+  req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+});
+
+/* GET /api/bus/events — REST snapshot (último N eventos) */
+app.get('/api/bus/events', auth, (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), MAX_BUS_EVENTS);
+  res.json({ total: busEvents.length, events: busEvents.slice(0, limit) });
+});
+
+/* POST /api/bus/emit — cualquier módulo interno emite aquí */
+app.post('/api/bus/emit', auth, (req, res) => {
+  const b = req.body || {};
+  const allowed_origins  = ['ELVI-RA', 'REFF', 'OPHS', 'SENTINEL', 'HERZOG', 'TCONTROLER', 'SYSTEM'];
+  const allowed_states   = ['PENDING', 'ROUTING', 'VALIDATING', 'BLOCKED', 'APPROVED', 'COMPLETED'];
+
+  const origin  = allowed_origins.includes(String(b.origin  || '').toUpperCase()) ? String(b.origin).toUpperCase()  : 'SYSTEM';
+  const dest    = String(b.dest    || 'BUS').toUpperCase();
+  const state   = allowed_states.includes(String(b.state   || '').toUpperCase()) ? String(b.state).toUpperCase()   : 'PENDING';
+  const type    = String(b.type    || 'event').toLowerCase();   // event | request | response | alert
+  const payload = b.payload && typeof b.payload === 'object' ? b.payload : {};
+  const label   = String(b.label   || '').slice(0, 140);
+
+  const event = {
+    id:        crypto.randomUUID(),
+    ts:        new Date().toISOString(),
+    seq:       busEvents.length + 1,
+    origin,
+    dest,
+    type,
+    state,
+    label,
+    payload,
+    user:      req.user,
+  };
+
+  busEmit(event);
+  res.status(201).json(event);
+});
+
+/* PATCH /api/bus/events/:id — actualizar estado de un evento existente */
+app.patch('/api/bus/events/:id', auth, (req, res) => {
+  const ev = busEvents.find(e => e.id === req.params.id);
+  if (!ev) return res.status(404).json({ error: 'evento no encontrado' });
+  const allowed_states = ['PENDING','ROUTING','VALIDATING','BLOCKED','APPROVED','COMPLETED'];
+  if (req.body.state && allowed_states.includes(String(req.body.state).toUpperCase())) {
+    ev.state = String(req.body.state).toUpperCase();
+    ev.updatedAt = new Date().toISOString();
+  }
+  if (req.body.label) ev.label = String(req.body.label).slice(0, 140);
+  busEmit({ ...ev, _type: 'state_update' }); // notify SSE clients
+  res.json(ev);
+});
+
+/* GET /api/bus/stats — métricas del bus */
+app.get('/api/bus/stats', auth, (req, res) => {
+  const counts = {};
+  for (const ev of busEvents) counts[ev.state] = (counts[ev.state] || 0) + 1;
+  const byOrigin = {};
+  for (const ev of busEvents) byOrigin[ev.origin] = (byOrigin[ev.origin] || 0) + 1;
+  res.json({
+    total: busEvents.length,
+    sseClients: sseClients.size,
+    byState: counts,
+    byOrigin,
+    latest: busEvents[0] || null,
+  });
+});
+
+/* ============================================================
+   CNMC MOLE · Mesa de energía desperdiciada
+   Fuente: apidatos.ree.es (público, sin token)
+   - Precio spot horario: /datos/mercados/precios-mercados-tiempo-real
+   - Demanda real horaria: /datos/demanda/demanda-tiempo-real
+   Metodología: horas con precio spot <= umbral → exceso = demanda * fracción curtailment
+   ============================================================ */
+
+const APIDATOS_BASE = 'https://apidatos.ree.es';
+const PRECIO_CERO_UMBRAL_EUR = 1.0; // EUR/MWh
+
+async function fetchApidatos(path) {
+  const { default: https } = await import('node:https');
+  const url = `${APIDATOS_BASE}${path}`;
+  return new Promise((resolve) => {
+    https.get(url, {
+      headers: { 'Accept': 'application/json', 'User-Agent': 'ElviRa/1.0 (S-NFI Corp; energia)' }
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try { resolve({ ok: res.statusCode === 200, status: res.statusCode, data: JSON.parse(d) }); }
+        catch { resolve({ ok: false, status: res.statusCode, data: null }); }
+      });
+    }).on('error', (e) => resolve({ ok: false, status: 0, data: null, error: e.message }));
+  });
+}
+
+function buildApidatosParams(start, end) {
+  const s = start.includes('T') ? start : `${start}T00:00`;
+  const e = end.includes('T') ? end : `${end}T23:59`;
+  const base = `?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&time_trunc=hour`;
+  return { precio: base, demanda: base };
+}
+
+function findSeries(included, ...keywords) {
+  if (!Array.isArray(included)) return null;
+  return included.find(i =>
+    keywords.some(kw => (i.type || '').toLowerCase().includes(kw.toLowerCase()))
+  ) || null;
+}
+
+function calcularDesperdicioDesdeREE(precioData, demandaData) {
+  // Extract hourly series from apidatos included[] structure
+  // type string varies by API version/locale: 'Spot market price', 'Precio mercado spot', etc.
+  const precioSeries = findSeries(precioData?.included, 'spot', 'precio mercado', 'pvpc');
+  const demandaSeries = findSeries(demandaData?.included, 'real', 'demanda real');
+
+  if (!precioSeries || !demandaSeries) return null;
+
+  const precios  = precioSeries.attributes?.values  || [];
+  const demandas = demandaSeries.attributes?.values || [];
+
+  // Index demand by datetime string (truncated to hour)
+  const demIdx = {};
+  for (const d of demandas) {
+    const key = d.datetime?.substring(0, 13); // "2026-06-04T10"
+    demIdx[key] = d.value; // MW
+  }
+
+  let horasPrecioCero = 0;
+  let excesoMwh = 0;
+  const detalle = [];
+
+  for (const p of precios) {
+    const key = p.datetime?.substring(0, 13);
+    const precio = p.value ?? 999;
+    const demandaMw = demIdx[key] ?? null;
+
+    if (precio <= PRECIO_CERO_UMBRAL_EUR) {
+      horasPrecioCero++;
+      // Cuando precio = 0, la generacion excede demanda.
+      // Estimamos curtailment = 5-15% de la demanda en esas horas (proxy conservador)
+      // Dato real requeriria generacion total, que apidatos no expone sin token.
+      // Usamos 10% de demanda como proxy minimo documentado en literatura REE.
+      if (demandaMw != null) {
+        const exceso = demandaMw * 0.10; // MWh (ya en MWh porque es 1h * MW)
+        excesoMwh += exceso;
+        detalle.push({ datetime: p.datetime, precio_eur_mwh: precio, demanda_mw: demandaMw, exceso_mwh: exceso });
+      }
+    }
+  }
+
+  return {
+    horas_precio_cero: horasPrecioCero,
+    exceso_gwh: Math.round((excesoMwh / 1000) * 10000) / 10000,
+    generacion_proxy: '10% demanda en horas precio≤1EUR (proxy REE)',
+    detalle_horas: detalle,
+  };
+}
+
+/* GET /api/cnmc-mole/waste?start=YYYY-MM-DD&end=YYYY-MM-DD */
+app.get('/api/cnmc-mole/waste', auth, async (req, res) => {
+  try {
+    const start = String(req.query.start || '').trim();
+    const end   = String(req.query.end   || '').trim();
+    if (!start || !end) return res.status(400).json({ error: 'start y end requeridos (YYYY-MM-DD)' });
+
+    const params = buildApidatosParams(start, end);
+
+    const [precioResult, demandaResult] = await Promise.all([
+      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
+      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
+    ]);
+
+    if (!precioResult.ok) return res.status(502).json({ error: `ESIOS precio HTTP ${precioResult.status}` });
+    if (!demandaResult.ok) return res.status(502).json({ error: `ESIOS demanda HTTP ${demandaResult.status}` });
+
+    const calculo = calcularDesperdicioDesdeREE(precioResult.data, demandaResult.data);
+    if (!calculo) return res.status(502).json({ error: 'No se encontraron series precio/demanda en respuesta REE' });
+
+    busEmit({
+      id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+      origin: 'ELVI-RA', dest: 'CNMC-MOLE', type: 'event', state: 'COMPLETED',
+      label: `CNMC MOLE · ${start}→${end} · ${calculo.horas_precio_cero}h precio≤1€ · ${calculo.exceso_gwh} GWh`,
+      payload: { start, end, horas: calculo.horas_precio_cero, gwh: calculo.exceso_gwh },
+      user: req.user,
+    });
+
+    res.json({
+      periodo: { start, end },
+      umbral_eur_mwh: PRECIO_CERO_UMBRAL_EUR,
+      metodologia: 'Precio spot peninsular (apidatos.ree.es). Horas ≤ umbral = energía desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
+      fuente: 'apidatos.ree.es — Red Eléctrica de España (público, sin token)',
+      horas_precio_cero: calculo.horas_precio_cero,
+      exceso_gwh: calculo.exceso_gwh,
+      detalle_horas: calculo.detalle_horas,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[cnmc-mole/waste]', ex);
+    res.status(500).json({ error: ex.message || 'error interno CNMC Mole' });
+  }
+});
+
+/* GET /api/cnmc-mole/annual?year=2025 — resumen anual (hasta fecha actual si año en curso) */
+app.get('/api/cnmc-mole/annual', auth, async (req, res) => {
+  try {
+    const year = parseInt(req.query.year || new Date().getFullYear(), 10);
+    if (isNaN(year) || year < 2020 || year > 2030) return res.status(400).json({ error: 'year inválido' });
+
+    const today = new Date();
+    const endDate = (year < today.getFullYear())
+      ? `${year}-12-31`
+      : today.toISOString().split('T')[0];
+
+    const start = `${year}-01-01`;
+    const params = buildApidatosParams(start, endDate);
+
+    const [precioResult, demandaResult] = await Promise.all([
+      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
+      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
+    ]);
+
+    if (!precioResult.ok) return res.status(502).json({ error: `ESIOS precio HTTP ${precioResult.status}` });
+    if (!demandaResult.ok) return res.status(502).json({ error: `ESIOS demanda HTTP ${demandaResult.status}` });
+
+    const calculo = calcularDesperdicioDesdeREE(precioResult.data, demandaResult.data);
+    if (!calculo) return res.status(502).json({ error: 'Sin datos REE para el periodo' });
+
+    // Monthly breakdown from detalle_horas
+    const porMes = {};
+    for (const h of calculo.detalle_horas) {
+      const mes = h.datetime?.substring(0, 7); // "2026-06"
+      if (!mes) continue;
+      if (!porMes[mes]) porMes[mes] = { mes, horas: 0, exceso_gwh: 0 };
+      porMes[mes].horas++;
+      porMes[mes].exceso_gwh = Math.round((porMes[mes].exceso_gwh + h.exceso_mwh / 1000) * 10000) / 10000;
+    }
+
+    const referencia = { 2023: 2100, 2024: 3600, 2025: 5000 };
+    const refGwh = referencia[year] || null;
+
+    res.json({
+      year,
+      periodo_analizado: { start, end: endDate },
+      umbral_eur_mwh: PRECIO_CERO_UMBRAL_EUR,
+      total_gwh_desperdiciados: calculo.exceso_gwh,
+      total_horas_precio_cero: calculo.horas_precio_cero,
+      metodologia: calculo.generacion_proxy,
+      fuente: 'apidatos.ree.es — Red Eléctrica de España (público, sin token)',
+      referencia_historica_gwh: refGwh,
+      pct_vs_referencia: refGwh ? Math.round((calculo.exceso_gwh / refGwh) * 1000) / 10 : null,
+      mensual: Object.values(porMes),
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[cnmc-mole/annual]', ex);
+    res.status(500).json({ error: ex.message || 'error interno CNMC Mole' });
+  }
+});
+
+/* GET /api/cnmc-mole/historic?from=2020&to=2026
+   Agrega datos anuales de desperdicio energetico desde `from` hasta `to`.
+   Cada ano = una llamada a apidatos. Respuesta unica con array por ano. */
+app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
+  try {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const fromYear = Math.max(2014, Math.min(parseInt(req.query.from || '2020', 10), currentYear));
+    const toYear   = Math.min(currentYear, Math.max(parseInt(req.query.to || String(currentYear), 10), fromYear));
+
+    if (isNaN(fromYear) || isNaN(toYear)) return res.status(400).json({ error: 'from/to invalidos' });
+
+    const years = [];
+    for (let y = fromYear; y <= toYear; y++) years.push(y);
+
+    // Fetch years sequentially to avoid hammering apidatos with 7 parallel requests
+    const resultados = [];
+    for (const year of years) {
+      try {
+        const endDate = year < currentYear ? `${year}-12-31` : today.toISOString().split('T')[0];
+        const start   = `${year}-01-01`;
+        const params  = buildApidatosParams(start, endDate);
+
+        const [precioRes, demandaRes] = await Promise.all([
+          fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params}`),
+          fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params}`),
+        ]);
+
+        if (!precioRes.ok || !demandaRes.ok) {
+          resultados.push({ year, error: `HTTP precio:${precioRes.status} demanda:${demandaRes.status}`, exceso_gwh: null, horas_precio_cero: null });
+          continue;
+        }
+
+        const calculo = calcularDesperdicioDesdeREE(precioRes.data, demandaRes.data);
+        if (!calculo) {
+          resultados.push({ year, error: 'sin series en respuesta REE', exceso_gwh: null, horas_precio_cero: null });
+          continue;
+        }
+
+        // Monthly breakdown
+        const porMes = {};
+        for (const h of calculo.detalle_horas) {
+          const mes = h.datetime?.substring(0, 7);
+          if (!mes) continue;
+          if (!porMes[mes]) porMes[mes] = { mes, horas: 0, exceso_gwh: 0 };
+          porMes[mes].horas++;
+          porMes[mes].exceso_gwh = Math.round((porMes[mes].exceso_gwh + h.exceso_mwh / 1000) * 10000) / 10000;
+        }
+
+        resultados.push({
+          year,
+          completo: year < currentYear,
+          periodo: { start, end: endDate },
+          exceso_gwh: calculo.exceso_gwh,
+          horas_precio_cero: calculo.horas_precio_cero,
+          mensual: Object.values(porMes),
+          error: null,
+        });
+      } catch (yearErr) {
+        resultados.push({ year, error: yearErr.message, exceso_gwh: null, horas_precio_cero: null });
+      }
+    }
+
+    const totalGwh   = resultados.reduce((s, r) => s + (r.exceso_gwh || 0), 0);
+    const totalHoras = resultados.reduce((s, r) => s + (r.horas_precio_cero || 0), 0);
+    const maxGwh     = Math.max(...resultados.map(r => r.exceso_gwh || 0));
+
+    busEmit({
+      id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+      origin: 'ELVI-RA', dest: 'CNMC-MOLE', type: 'event', state: 'COMPLETED',
+      label: `CNMC MOLE HISTORICO · ${fromYear}-${toYear} · ${Math.round(totalGwh)} GWh acumulados`,
+      payload: { fromYear, toYear, totalGwh: Math.round(totalGwh), anos: resultados.length },
+      user: req.user,
+    });
+
+    res.json({
+      fromYear,
+      toYear,
+      total_gwh_acumulados: Math.round(totalGwh * 100) / 100,
+      total_horas_acumuladas: totalHoras,
+      max_gwh_ano: maxGwh,
+      fuente: 'apidatos.ree.es — Red Electrica de Espana (publico, sin token)',
+      metodologia: 'Precio spot peninsular <= 1 EUR/MWh = hora desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
+      anos: resultados,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[cnmc-mole/historic]', ex);
+    res.status(500).json({ error: ex.message || 'error historico CNMC Mole' });
+  }
+});
+
+/* ============================================================
+   CNMC MOLE · Live monitor — precio spot 15-min en tiempo real
+   Poller: cada 5 min fetch apidatos → cache en memoria → SSE push
+   Endpoint: GET /api/cnmc-mole/live → ultimo snapshot + serie hoy
+   ============================================================ */
+
+const LIVE_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+const LIVE_HISTORY_MAX_DAYS = 7; // keep last 7 days of snapshots in memory
+
+// Ring-buffer de snapshots diarios (en memoria, se pierde al reiniciar)
+// Estructura: Map<"YYYY-MM-DD", { intervals: [], computed: {} }>
+const liveCache = new Map();
+let liveLastUpdated = null;
+let liveIsPolling = false;
+
+function buildApidatosParams15min(date) {
+  const s = `${date}T00:00`;
+  const e = `${date}T23:59`;
+  const base = `?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&time_trunc=hour`;
+  return { precio: base, demanda: base };
+}
+
+function computeLiveStats(priceValues, demandValues) {
+  // demandValues indexed by hour key "YYYY-MM-DDTHH"
+  const demIdx = {};
+  for (const d of demandValues) {
+    const key = d.datetime?.substring(0, 13);
+    if (key) demIdx[key] = d.value;
+  }
+
+  let negativeCount = 0;
+  let zeroCount = 0;
+  let totalExcesoMwh = 0;
+  const intervals = [];
+  let minPrice = Infinity;
+  let maxPrice = -Infinity;
+
+  for (const p of priceValues) {
+    const precio = p.value ?? 999;
+    const key = p.datetime?.substring(0, 13);
+    const demMw = demIdx[key] ?? null;
+    const isWasted = precio <= PRECIO_CERO_UMBRAL_EUR;
+    const isNegative = precio < 0;
+    const excesoMwh = (isWasted && demMw != null) ? demMw * 0.10 : 0;
+
+    if (isNegative) negativeCount++;
+    if (precio === 0) zeroCount++;
+    if (isWasted) totalExcesoMwh += excesoMwh;
+    if (precio < minPrice) minPrice = precio;
+    if (precio > maxPrice) maxPrice = precio;
+
+    intervals.push({
+      datetime: p.datetime,
+      precio_eur_mwh: precio,
+      demanda_mw: demMw,
+      desperdiciada: isWasted,
+      negativa: isNegative,
+      exceso_mwh: excesoMwh,
+    });
+  }
+
+  const wastedCount = intervals.filter(i => i.desperdiciada).length;
+
+  return {
+    intervalos_totales: intervals.length,
+    intervalos_desperdiciados: wastedCount,
+    intervalos_negativos: negativeCount,
+    exceso_gwh_hoy: Math.round((totalExcesoMwh / 1000) * 10000) / 10000,
+    precio_min_eur_mwh: isFinite(minPrice) ? Math.round(minPrice * 100) / 100 : null,
+    precio_max_eur_mwh: isFinite(maxPrice) ? Math.round(maxPrice * 100) / 100 : null,
+    all_intervals: intervals,
+  };
+}
+
+async function pollLiveData() {
+  if (liveIsPolling) return;
+  liveIsPolling = true;
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const params = buildApidatosParams15min(today);
+
+    const [precioRes, demandaRes] = await Promise.all([
+      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
+      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
+    ]);
+
+    if (!precioRes.ok || !demandaRes.ok) {
+      console.warn(`[cnmc-mole/live] poll failed: precio=${precioRes.status} demanda=${demandaRes.status}`);
+      return;
+    }
+
+    const priceSeries = findSeries(precioRes.data?.included, 'spot', 'precio mercado', 'pvpc');
+    const demandSeries = findSeries(demandaRes.data?.included, 'real', 'demanda real');
+
+    if (!priceSeries || !demandSeries) {
+      const types = (precioRes.data?.included || []).map(i => i.type).concat(
+        (demandaRes.data?.included || []).map(i => i.type)
+      );
+      console.warn('[cnmc-mole/live] series not found. Available types:', types.join(', ') || '(empty)');
+      return;
+    }
+
+    const stats = computeLiveStats(
+      priceSeries.attributes?.values || [],
+      demandSeries.attributes?.values || [],
+    );
+
+    liveCache.set(today, { date: today, updatedAt: new Date().toISOString(), ...stats });
+    liveLastUpdated = new Date().toISOString();
+
+    // Evict old days
+    const days = [...liveCache.keys()].sort();
+    while (days.length > LIVE_HISTORY_MAX_DAYS) {
+      liveCache.delete(days.shift());
+    }
+
+    // Push SSE event to Observer
+    busEmit({
+      id: crypto.randomUUID(),
+      ts: new Date().toISOString(),
+      seq: busEvents.length + 1,
+      origin: 'CNMC-MOLE',
+      dest: 'ELVI-RA',
+      type: 'event',
+      state: stats.en_desperdicio_ahora ? 'BLOCKED' : 'COMPLETED',
+      label: `CNMC MOLE LIVE · ${today} · precio=${stats.precio_actual_eur_mwh} EUR/MWh · ${stats.intervalos_negativos} neg · ${stats.exceso_gwh_hoy} GWh`,
+      payload: {
+        date: today,
+        precio_actual: stats.precio_actual_eur_mwh,
+        en_desperdicio: stats.en_desperdicio_ahora,
+        exceso_gwh_hoy: stats.exceso_gwh_hoy,
+        intervalos_negativos: stats.intervalos_negativos,
+      },
+      user: 'system',
+    });
+  } catch (err) {
+    console.error('[cnmc-mole/live] poll error:', err.message);
+  } finally {
+    liveIsPolling = false;
+  }
+}
+
+// Start poller immediately then every 5 min
+pollLiveData();
+setInterval(pollLiveData, LIVE_POLL_INTERVAL_MS);
+
+/* GET /api/cnmc-mole/live — snapshot actual + serie del dia
+   Si cache vacio, hace fetch sincrono a apidatos antes de responder. */
+app.get('/api/cnmc-mole/live', auth, async (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+
+  // Si no hay snapshot para hoy, esperar a que termine el poll en curso o lanzar uno nuevo
+  if (!liveCache.has(today)) {
+    if (liveIsPolling) {
+      // Wait up to 20s for the in-flight poll to complete
+      await new Promise(resolve => {
+        const t0 = Date.now();
+        const check = setInterval(() => {
+          if (!liveIsPolling || Date.now() - t0 > 20000) { clearInterval(check); resolve(); }
+        }, 250);
+      });
+    } else {
+      await pollLiveData();
+    }
+  }
+
+  const rawSnap = liveCache.get(today) || null;
+
+  // Filter to past/current intervals at serve time — REE publishes full day ahead
+  let snapshot = null;
+  if (rawSnap) {
+    const nowIso = new Date().toISOString();
+    const past = (rawSnap.all_intervals || []).filter(i => i.datetime <= nowIso);
+    const display = past.length ? past : (rawSnap.all_intervals || []).slice(0, 1);
+    const current = display[display.length - 1] || null;
+    const wastedNow  = display.filter(i => i.desperdiciada).length;
+    const negNow     = display.filter(i => i.negativa).length;
+    const excesoNow  = display.reduce((s, i) => s + (i.exceso_mwh || 0), 0);
+    snapshot = {
+      ...rawSnap,
+      intervalos_totales: display.length,
+      intervalos_desperdiciados: wastedNow,
+      intervalos_negativos: negNow,
+      exceso_gwh_hoy: Math.round((excesoNow / 1000) * 10000) / 10000,
+      precio_actual_eur_mwh: current ? current.precio_eur_mwh : null,
+      pct_horas_desperdiciadas: display.length ? Math.round((wastedNow / display.length) * 1000) / 10 : 0,
+      en_desperdicio_ahora: current ? current.desperdiciada : false,
+      intervals: display,
+    };
+  }
+
+  const history = [...liveCache.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, d]) => ({
+      date,
+      exceso_gwh: d.exceso_gwh_hoy,
+      intervalos_negativos: (d.all_intervals || []).filter(i => i.negativa).length,
+      precio_min: d.precio_min_eur_mwh,
+      precio_max: d.precio_max_eur_mwh,
+      pct_desperdiciadas: d.pct_horas_desperdiciadas,
+    }));
+
+  res.json({
+    polling_interval_ms: LIVE_POLL_INTERVAL_MS,
+    last_updated: liveLastUpdated,
+    today,
+    snapshot,
+    history_days: history,
+    fuente: 'apidatos.ree.es — Red Electrica de Espana (publico, sin token)',
+    metodologia: 'Precio spot peninsular <= 1 EUR/MWh = energia desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
+  });
 });
 
 /* ---------- static frontend ---------- */

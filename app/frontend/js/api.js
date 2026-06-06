@@ -77,6 +77,12 @@ export const api = {
   herzogAudit:       (a) => req('POST', '/api/elvira/herzog/audits', a),
   tcontroler:        () => req('GET',  '/api/elvira/tcontroler'),
   tcontrolerReset:   () => req('DELETE', '/api/elvira/tcontroler/reset'),
+
+  // CNMC · Embudo Legal
+  cnmcSearch:        (empresa, cif, periodo) => req('POST', '/api/elvira/cnmc/search', { empresa, cif, periodo }),
+  cnmcIngest:        (doc) => req('POST', '/api/elvira/cnmc/ingest', doc),
+  cnmcDocuments:     () => req('GET',  '/api/elvira/cnmc/documents'),
+  cnmcAudit:         (companyId, docId) => req('POST', `/api/elvira/cnmc/audit/${companyId}`, docId ? { docId } : {}),
 };
 
 export function toast(msg) {

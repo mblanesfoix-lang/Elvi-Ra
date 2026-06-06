@@ -43,11 +43,88 @@
         <p class="mono" style="margin-top:10px;">acceso directo →</p>
       </a>
 
-      <div class="tile reveal delay-3" style="opacity:.55; cursor:not-allowed;">
-        <div class="emoji">⚙️</div>
-        <h3>Próxima mesa</h3>
-        <p>Mesa adicional en construcción.</p>
-        <p class="mono" style="margin-top:10px;">próximamente</p>
+      <a class="tile reveal delay-3" href="/pages/observer.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+        <div class="emoji">◉</div>
+        <h3>Observer</h3>
+        <p>Consola de Telemetría. Bus de eventos en tiempo real. Flujo de paquetes entre Elvi-Ra, Rëff, OPHS, Sentinel y Herzog.</p>
+        <p class="mono" style="margin-top:10px;">acceso directo →</p>
+      </a>
+
+      <a class="tile reveal delay-4" href="/pages/cnmc-mole.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+        <div class="emoji">◎</div>
+        <h3>CNMC Mole</h3>
+        <p>Energía desperdiciada en el sistema eléctrico español. Horas precio 0&nbsp;EUR/MWh, GWh curtailed, comparativa histórica 2023-2026. Dato vivo vía REE.</p>
+        <p class="mono" style="margin-top:10px;">acceso directo →</p>
+      </a>
+    </section>
+
+    <div class="hr"></div>
+
+    <!-- CNMC Intelligence Finder -->
+    <section class="reveal" id="cnmcSection">
+      <span class="kicker">Regulatorio · CNMC</span>
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:4px;">
+        <div>
+          <h2 style="margin:0 0 4px;">CNMC Finder</h2>
+          <p style="margin:0; max-width:560px;">Busca documentos regulatorios CNMC de cualquier empresa. Rëff sintetiza sanciones, expedientes, BSS declarado y estado de compliance — listo para auditoría de asimetría.</p>
+        </div>
+        <button class="btn" id="cnmcToggle">Abrir buscador</button>
+      </div>
+
+      <div id="cnmcPanel" style="display:none; margin-top:20px;">
+        <div class="card" style="padding:20px;">
+          <div style="display:grid; grid-template-columns:1fr 160px 120px; gap:10px; align-items:end; flex-wrap:wrap;">
+            <div>
+              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">EMPRESA / NODO</label>
+              <input id="cnmcEmpresa" type="text" placeholder="ej. Iberdrola, Acciona, Naturgy..." style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
+            </div>
+            <div>
+              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">CIF (opcional)</label>
+              <input id="cnmcCif" type="text" placeholder="A12345678" style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
+            </div>
+            <div>
+              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">PERIODO</label>
+              <input id="cnmcPeriodo" type="text" placeholder="2023" style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
+            </div>
+          </div>
+          <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+            <button class="btn" id="cnmcSearchBtn" style="min-width:140px;">Buscar en CNMC</button>
+            <span id="cnmcStatus" class="mono" style="font-size:.7rem; color:var(--text-muted); align-self:center;"></span>
+          </div>
+        </div>
+
+        <!-- Result -->
+        <div id="cnmcResult" style="display:none; margin-top:16px;">
+          <div class="card" style="padding:20px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+              <div>
+                <span id="cnmcResEmpresa" class="mono" style="font-weight:700; font-size:.9rem;"></span>
+                <span id="cnmcResPeriodo" class="mono" style="color:var(--text-muted); font-size:.75rem; margin-left:10px;"></span>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <span id="cnmcResConfianza" class="mono" style="font-size:.62rem; padding:2px 8px; border:1px solid; border-radius:3px;"></span>
+                <span id="cnmcResCompliance" class="mono" style="font-size:.62rem; padding:2px 8px; border:1px solid; border-radius:3px;"></span>
+              </div>
+            </div>
+
+            <div id="cnmcResGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; margin-bottom:14px;"></div>
+
+            <div id="cnmcResFuente" class="mono" style="font-size:.62rem; color:var(--text-muted); margin-bottom:10px;"></div>
+            <div id="cnmcResNotas" style="font-size:.78rem; color:var(--text-muted); line-height:1.5; margin-bottom:14px;"></div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn" id="cnmcIngestBtn">Ingestar documento</button>
+              <button class="btn ghost" id="cnmcAuditBtn" style="display:none;">Auditar empresa en CRM</button>
+            </div>
+            <div id="cnmcActionStatus" class="mono" style="font-size:.68rem; color:var(--text-muted); margin-top:8px;"></div>
+          </div>
+        </div>
+
+        <!-- Documentos ingestados -->
+        <div style="margin-top:16px;">
+          <span class="kicker" style="font-size:.62rem;">Documentos CNMC ingestados</span>
+          <div id="cnmcDocList" style="margin-top:8px; display:grid; gap:6px;"></div>
+        </div>
       </div>
     </section>
 
@@ -76,7 +153,7 @@
   </main>
 
   <script type="module">
-    import { api, getUser, clearSession, requireAuth } from '/js/api.js';
+    import { api, getUser, getToken, clearSession, requireAuth } from '/js/api.js';
     requireAuth();
     const user = getUser() || '';
     document.getElementById('userTag').textContent = user;
@@ -111,6 +188,124 @@
       document.getElementById('tcMain').textContent = '— / —';
       document.getElementById('tcSub').textContent = 'solo visible para Admin';
     }
+
+    /* ---- CNMC Finder ---- */
+    const cnmcToggle = document.getElementById('cnmcToggle');
+    const cnmcPanel  = document.getElementById('cnmcPanel');
+    let cnmcLastResult = null;
+
+    cnmcToggle.addEventListener('click', () => {
+      const open = cnmcPanel.style.display !== 'none';
+      cnmcPanel.style.display = open ? 'none' : 'block';
+      cnmcToggle.textContent  = open ? 'Abrir buscador' : 'Cerrar';
+      if (!open) loadCnmcDocs();
+    });
+
+    async function loadCnmcDocs() {
+      try {
+        const docs = await api.cnmcDocuments();
+        const el = document.getElementById('cnmcDocList');
+        if (!docs.length) { el.innerHTML = '<span class="mono" style="font-size:.65rem;color:var(--text-muted);">Sin documentos ingestados.</span>'; return; }
+        el.innerHTML = docs.slice(0, 20).map(d => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 12px; background:var(--bg2); border:1px solid var(--border); border-radius:5px; flex-wrap:wrap; gap:6px;">
+            <div>
+              <span class="mono" style="font-size:.72rem; font-weight:600;">${d.empresa}</span>
+              <span class="mono" style="font-size:.62rem; color:var(--text-muted); margin-left:8px;">${d.periodo || ''}</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <span class="mono" style="font-size:.58rem; color:var(--accent-green2); border:1px solid rgba(0,168,120,.35); padding:1px 6px; border-radius:2px;">[CNMC]</span>
+              <span class="mono" style="font-size:.6rem; color:var(--text-muted);">${new Date(d.ingestedAt).toLocaleDateString('es-ES')}</span>
+            </div>
+          </div>`).join('');
+      } catch { /* silencioso */ }
+    }
+
+    document.getElementById('cnmcSearchBtn').addEventListener('click', async () => {
+      const empresa = document.getElementById('cnmcEmpresa').value.trim();
+      const cif     = document.getElementById('cnmcCif').value.trim();
+      const periodo = document.getElementById('cnmcPeriodo').value.trim();
+      if (!empresa) { document.getElementById('cnmcStatus').textContent = 'Introduce el nombre de la empresa.'; return; }
+
+      const btn = document.getElementById('cnmcSearchBtn');
+      btn.disabled = true;
+      btn.textContent = 'Buscando...';
+      document.getElementById('cnmcStatus').textContent = 'Consultando CNMC vía Rëff...';
+      document.getElementById('cnmcResult').style.display = 'none';
+
+      try {
+        const data = await api.cnmcSearch(empresa, cif || undefined, periodo || undefined);
+        cnmcLastResult = data;
+        renderCnmcResult(data);
+        document.getElementById('cnmcStatus').textContent = `Resultado recibido · ${new Date().toLocaleTimeString('es-ES')}`;
+      } catch (ex) {
+        document.getElementById('cnmcStatus').textContent = `Error: ${ex.message}`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Buscar en CNMC';
+      }
+    });
+
+    function renderCnmcResult(d) {
+      const datos = d.datos || {};
+      document.getElementById('cnmcResult').style.display = 'block';
+      document.getElementById('cnmcResEmpresa').textContent = d.empresa || '';
+      document.getElementById('cnmcResPeriodo').textContent = d.periodo || '';
+
+      const confEl = document.getElementById('cnmcResConfianza');
+      confEl.textContent = `CONFIANZA: ${d.confianza || '?'}`;
+      confEl.style.color = d.confianza === 'ALTA' ? 'var(--accent-green2)' : d.confianza === 'MEDIA' ? 'var(--accent-amber)' : 'var(--text-muted)';
+      confEl.style.borderColor = confEl.style.color;
+
+      const compEl = document.getElementById('cnmcResCompliance');
+      const comp = datos.estadoCompliance || '?';
+      compEl.textContent = comp;
+      const compColor = comp === 'APTO' ? 'var(--accent-green2)' : comp === 'OBSERVACION' ? 'var(--accent-amber)' : 'var(--amg-red)';
+      compEl.style.color = compColor;
+      compEl.style.borderColor = compColor;
+
+      const fields = [
+        ['BSS (MWh)', datos.bssMwh ?? '—'],
+        ['Resiliencia', datos.resiliencia || '—'],
+        ['Sanciones', datos.sanciones || '—'],
+        ['Expedientes', datos.expedientes || '—'],
+        ['Régimen', datos.regimen || '—'],
+        ['Potencia inst. (MW)', datos.potenciaInstalada ?? '—'],
+        ['Vol. residuo (T)', datos.volumenResiduoT ?? '—'],
+      ];
+      document.getElementById('cnmcResGrid').innerHTML = fields.map(([k, v]) => `
+        <div style="padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
+          <div class="mono" style="font-size:.58rem; color:var(--text-muted); letter-spacing:.07em; margin-bottom:3px;">${k}</div>
+          <div style="font-size:.8rem; font-weight:600; color:var(--text);">${v}</div>
+        </div>`).join('');
+
+      document.getElementById('cnmcResFuente').textContent = d.fuente ? `FUENTE: ${d.fuente}` : '';
+      document.getElementById('cnmcResNotas').textContent = d.notas || '';
+      document.getElementById('cnmcActionStatus').textContent = '';
+    }
+
+    document.getElementById('cnmcIngestBtn').addEventListener('click', async () => {
+      if (!cnmcLastResult) return;
+      const btn = document.getElementById('cnmcIngestBtn');
+      btn.disabled = true;
+      btn.textContent = 'Ingestando...';
+      try {
+        const data = await api.cnmcIngest({
+          empresa: cnmcLastResult.empresa,
+          cif:     cnmcLastResult.cif || undefined,
+          periodo: cnmcLastResult.periodo,
+          fuente:  cnmcLastResult.fuente || 'CNMC Intelligence (Rëff)',
+          datos:   cnmcLastResult.datos || {},
+        });
+        document.getElementById('cnmcActionStatus').textContent = `Documento ingestado · ID: ${data.id}`;
+        document.getElementById('cnmcIngestBtn').textContent = 'Ingestado';
+        loadCnmcDocs();
+      } catch (ex) {
+        document.getElementById('cnmcActionStatus').textContent = `Error: ${ex.message}`;
+      } finally {
+        btn.disabled = false;
+        if (btn.textContent === 'Ingestando...') btn.textContent = 'Ingestar documento';
+      }
+    });
   </script>
 </body>
 </html>

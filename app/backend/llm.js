@@ -16,6 +16,7 @@ const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-opus-4-7';
 // Pricing per 1M tokens (only relevant for Anthropic — Ollama is $0)
 export const PRICE_INPUT_PER_M  = 15;
 export const PRICE_OUTPUT_PER_M = 75;
+export { ANTHROPIC_MODEL };
 
 /**
  * Single-shot LLM call. Returns the full response text.
