@@ -33,7 +33,7 @@ async function ensureIndexes() {
   await elviraDb.collection('bus_history').createIndex({ origin: 1, state: 1, type: 1 });
 
   // Sentinel · trazabilidad forense IP
-  await elviraDb.collection('forensic_log').createIndex({ seq: -1 });
+  await elviraDb.collection('forensic_log').createIndex({ seq: 1 }, { unique: true });
   await elviraDb.collection('forensic_log').createIndex({ ip: 1 });
   await elviraDb.collection('forensic_log').createIndex({ mesa: 1, sensitive: 1, blocked: 1 });
   await elviraDb.collection('rate_limits').createIndex({ key: 1, ts: -1 });

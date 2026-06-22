@@ -329,10 +329,19 @@ app.use(sentinelForensics.middleware(mesaForPath));
 
 app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body || {};
+  const ip = req.ip || 'unknown';
+
+  if (!username || !String(username).toLowerCase().endsWith('@snficorp.com')) {
+    await sentinelForensics.registerLoginAttempt({ ip, username, ok: false, reason: 'dominio_no_autorizado' });
+    return res.status(403).json({ error: 'Dominio no autorizado. IP bloqueada por Sentinel.' });
+  }
+
   const u = USERS[username];
   if (!u || !password || !(await bcrypt.compare(password, u.passwordHash))) {
+    await sentinelForensics.registerLoginAttempt({ ip, username, ok: false, reason: 'credenciales_invalidas' });
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
+  await sentinelForensics.registerLoginAttempt({ ip, username, ok: true });
   const token = crypto.randomBytes(24).toString('hex');
   SESSIONS.set(token, { user: username, role: u.role, exp: Date.now() + 1000 * 60 * 60 * 8 });
   saveSessions();
@@ -1920,10 +1929,24 @@ app.get('/api/sentinel/forensic-log', auth, async (req, res) => {
   res.json(result);
 });
 
+/* GET /api/sentinel/forensic-log-human — mismo log en frases claras, sin jerga tecnica */
+app.get('/api/sentinel/forensic-log-human', auth, async (req, res) => {
+  const { ip, blocked, limit, offset } = req.query;
+  const result = await sentinelForensics.listForensicLogHuman({ ip, blocked, limit, offset });
+  res.json(result);
+});
+
 /* GET /api/sentinel/verify-chain — Admin, valida integridad de la cadena de hashes */
 app.get('/api/sentinel/verify-chain', auth, async (req, res) => {
   if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
   const result = await sentinelForensics.verifyChain();
+  res.json(result);
+});
+
+/* POST /api/sentinel/reanchor-chain — Admin, re-sella la cadena tras un fallo (no borra historial) */
+app.post('/api/sentinel/reanchor-chain', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const result = await sentinelForensics.reanchorChain(req.user);
   res.json(result);
 });
 
@@ -3409,6 +3432,10 @@ const TWIN_TOKEN = process.env.TWIN_TOKEN;
 
 if (process.env.ENABLE_TWIN_PORT === 'true') {
   const twinApp = express();
+
+  // Twin queda bajo la misma vigilancia Sentinel que el resto de puertos:
+  // mismo log forense, mismo rate limit, misma cola de revision de IPs.
+  sentinelForensics.attach(twinApp, () => 'twin');
 
   // Middleware de seguridad soberana para el Twin
   const twinAuthMiddleware = (req, res, next) => {

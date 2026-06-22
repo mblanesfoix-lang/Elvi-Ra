@@ -146,6 +146,47 @@
     .back-link::before { content: '←'; font-size: 0.9rem; }
 
     .empty-row { text-align: center; color: var(--text-dim); padding: 20px; font-family: var(--font-mono); font-size: 0.72rem; }
+
+    /* ── Tabs ── */
+    .sen-tabs {
+      display: flex; gap: 0; margin-bottom: 24px; border: 1px solid var(--border-mid); width: fit-content; flex-wrap: wrap;
+    }
+    .sen-tab {
+      padding: 10px 24px; font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--text-muted); background: var(--bg-card); border: none;
+      border-right: 1px solid var(--border-mid); cursor: pointer; transition: background 0.18s, color 0.18s;
+    }
+    .sen-tab:last-child { border-right: none; }
+    .sen-tab.active { background: var(--text-primary); color: #fff; font-weight: 600; }
+    .sen-tab:hover:not(.active) { color: var(--text-primary); }
+
+    /* ── Peticiones en lenguaje claro ── */
+    .req-feed { display: flex; flex-direction: column; gap: 8px; }
+    .req-item {
+      display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px;
+      border: 1px solid var(--border); border-left: 3px solid var(--accent-green2);
+      background: var(--bg-elevated); border-radius: 3px;
+    }
+    .req-item.blocked { border-left-color: var(--accent-red); background: rgba(216,3,0,0.04); }
+    .req-item__icon { font-size: 1.1rem; line-height: 1; flex-shrink: 0; margin-top: 1px; }
+    .req-item__body { flex: 1; min-width: 0; }
+    .req-item__msg { font-size: 0.84rem; color: var(--text-primary); line-height: 1.5; }
+    .req-item__meta {
+      font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-dim);
+      margin-top: 5px; display: flex; gap: 10px; flex-wrap: wrap;
+    }
+
+    /* ── Risk badge ── */
+    .risk-badge {
+      display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono);
+      font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px;
+      border-radius: 3px; font-weight: 700;
+    }
+    .risk-badge.BAJO { background: rgba(0,168,120,0.12); color: var(--accent-green2); }
+    .risk-badge.MEDIO { background: rgba(200,122,0,0.14); color: var(--accent-amber); }
+    .risk-badge.ALTO { background: rgba(216,3,0,0.14); color: var(--accent-red); }
+    .risk-bar-wrap { width: 60px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; display: inline-block; margin-left: 6px; vertical-align: middle; }
+    .risk-bar { height: 100%; border-radius: 3px; }
   </style>
 </head>
 <body>
@@ -205,101 +246,146 @@
       </div>
     </div>
 
-    <!-- TRAFICO -->
-    <div class="panel-section reveal">
-      <div class="panel-header">
-        <span class="panel-title">Trafico · peticiones por minuto · ultimos 60 min</span>
-        <span class="panel-badge" id="tlUpdatedAt">—</span>
+    <!-- TABS -->
+    <div class="sen-tabs reveal">
+      <button class="sen-tab active" id="tabResumen" onclick="switchTab('resumen')">Resumen</button>
+      <button class="sen-tab" id="tabPeticiones" onclick="switchTab('peticiones')">Peticiones</button>
+      <button class="sen-tab" id="tabCola" onclick="switchTab('cola')">IPs en cola revisión</button>
+      <button class="sen-tab" id="tabTecnico" onclick="switchTab('tecnico')">Log técnico</button>
+    </div>
+
+    <!-- ═══ TAB RESUMEN ═══ -->
+    <div id="panelResumen">
+      <!-- TRAFICO -->
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Trafico · peticiones por minuto · ultimos 60 min</span>
+          <span class="panel-badge" id="tlUpdatedAt">—</span>
+        </div>
+        <div class="panel-body">
+          <div class="tl-track" id="tlTrack"></div>
+          <div class="tl-labels" id="tlLabels"></div>
+          <div style="display:flex;gap:18px;margin-top:14px;font-family:var(--font-mono);font-size:0.58rem;color:var(--text-muted);">
+            <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-green);display:inline-block;border-radius:2px;opacity:.6;"></span>normal</span>
+            <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-red);display:inline-block;border-radius:2px;opacity:.75;"></span>con bloqueos</span>
+          </div>
+        </div>
       </div>
-      <div class="panel-body">
-        <div class="tl-track" id="tlTrack"></div>
-        <div class="tl-labels" id="tlLabels"></div>
-        <div style="display:flex;gap:18px;margin-top:14px;font-family:var(--font-mono);font-size:0.58rem;color:var(--text-muted);">
-          <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-green);display:inline-block;border-radius:2px;opacity:.6;"></span>normal</span>
-          <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-red);display:inline-block;border-radius:2px;opacity:.75;"></span>con bloqueos</span>
+
+      <!-- TOP IPs -->
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Top IPs por volumen</span>
+        </div>
+        <div class="panel-body" style="padding:0;">
+          <table class="sen-table">
+            <thead>
+              <tr><th>IP</th><th>Geo</th><th>Total peticiones</th><th>Bloqueadas</th><th>Ultima actividad</th><th>Acciones</th></tr>
+            </thead>
+            <tbody id="ipStatsBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <!-- BLOQUEO MANUAL -->
-    <div class="panel-section reveal">
-      <div class="panel-header">
-        <span class="panel-title">Bloqueo manual de IP</span>
-      </div>
-      <div class="panel-body">
-        <div class="manual-block-row">
-          <input type="text" id="manualBlockIp" placeholder="IP a bloquear (ej. 203.0.113.4)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
-          <input type="text" id="manualBlockReason" placeholder="Motivo (opcional)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
-          <button class="btn-mini danger" id="manualBlockBtn" style="padding:9px 16px;">Bloquear ahora</button>
+    <!-- ═══ TAB PETICIONES (lenguaje claro) ═══ -->
+    <div id="panelPeticiones" style="display:none;">
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Qué está pasando ahora mismo</span>
+          <span class="panel-badge" id="reqUpdatedAt">—</span>
         </div>
-        <div id="manualBlockMsg" style="display:none;margin-top:10px;font-family:var(--font-mono);font-size:0.68rem;"></div>
+        <div class="panel-body">
+          <p style="font-size:0.82rem;color:var(--text-muted);margin:0 0 16px;line-height:1.6;">
+            Cada línea es una petición real explicada en lenguaje sencillo: quién, desde dónde, qué intentó y qué hizo Sentinel.
+            Las marcadas en rojo fueron bloqueadas.
+          </p>
+          <div class="filters-row" style="margin-bottom:16px;">
+            <select id="reqFilter">
+              <option value="">Mostrar todo</option>
+              <option value="true">Solo lo bloqueado</option>
+            </select>
+            <button class="btn-mini" id="reqFilterApply">Actualizar</button>
+          </div>
+          <div class="req-feed" id="reqFeed"></div>
+          <div id="reqEmpty" class="empty-row" style="display:none;">No hay peticiones registradas todavía.</div>
+        </div>
       </div>
     </div>
 
-    <!-- COLA DE REVISION -->
-    <div class="panel-section reveal">
-      <div class="panel-header">
-        <span class="panel-title">Cola de revision Admin</span>
-        <span class="panel-badge" id="queueCount">—</span>
+    <!-- ═══ TAB COLA REVISION ═══ -->
+    <div id="panelCola" style="display:none;">
+      <!-- BLOQUEO MANUAL -->
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Bloqueo manual de IP</span>
+        </div>
+        <div class="panel-body">
+          <div class="manual-block-row">
+            <input type="text" id="manualBlockIp" placeholder="IP a bloquear (ej. 203.0.113.4)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
+            <input type="text" id="manualBlockReason" placeholder="Motivo (opcional)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
+            <button class="btn-mini danger" id="manualBlockBtn" style="padding:9px 16px;">Bloquear ahora</button>
+          </div>
+          <div id="manualBlockMsg" style="display:none;margin-top:10px;font-family:var(--font-mono);font-size:0.68rem;"></div>
+        </div>
       </div>
-      <div class="panel-body" style="padding:0;">
-        <table class="sen-table">
-          <thead>
-            <tr>
-              <th>IP</th><th>Geo</th><th>Estado</th><th>Motivo</th><th>Actualizado</th><th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody id="queueBody"></tbody>
-        </table>
-        <div id="queueEmpty" class="empty-row" style="display:none;">Sin IPs en cola.</div>
+
+      <!-- COLA DE REVISION -->
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Cola de revision Admin</span>
+          <span class="panel-badge" id="queueCount">—</span>
+        </div>
+        <div class="panel-body" style="padding:0;">
+          <table class="sen-table">
+            <thead>
+              <tr>
+                <th>IP</th><th>Geo</th><th>Nivel de riesgo</th><th>Estado</th><th>Motivo</th><th>Actualizado</th><th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="queueBody"></tbody>
+          </table>
+          <div id="queueEmpty" class="empty-row" style="display:none;">Sin IPs en cola.</div>
+        </div>
       </div>
     </div>
 
-    <!-- TOP IPs -->
-    <div class="panel-section reveal">
-      <div class="panel-header">
-        <span class="panel-title">Top IPs por volumen</span>
-      </div>
-      <div class="panel-body" style="padding:0;">
-        <table class="sen-table">
-          <thead>
-            <tr><th>IP</th><th>Geo</th><th>Total peticiones</th><th>Bloqueadas</th><th>Ultima actividad</th><th>Acciones</th></tr>
-          </thead>
-          <tbody id="ipStatsBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- LOG FORENSE -->
-    <div class="panel-section reveal">
-      <div class="panel-header">
-        <span class="panel-title">Log forense · cadena de hashes</span>
-        <div class="chain-status">
-          <div class="chain-dot" id="chainDot"></div>
-          <span id="chainText">verificando...</span>
+    <!-- ═══ TAB LOG TECNICO ═══ -->
+    <div id="panelTecnico" style="display:none;">
+      <div class="panel-section reveal">
+        <div class="panel-header">
+          <span class="panel-title">Log forense · cadena de hashes</span>
+          <div class="chain-status">
+            <div class="chain-dot" id="chainDot"></div>
+            <span id="chainText">verificando...</span>
+          </div>
         </div>
-      </div>
-      <div class="panel-body">
-        <div class="filters-row" style="margin-bottom:14px;">
-          <input type="text" id="filterIp" placeholder="Filtrar por IP">
-          <select id="filterBlocked">
-            <option value="">Todos</option>
-            <option value="true">Solo bloqueados</option>
-            <option value="false">Solo permitidos</option>
-          </select>
-          <select id="filterSensitive">
-            <option value="">Todas las rutas</option>
-            <option value="true">Solo rutas sensibles</option>
-          </select>
-          <button class="btn-mini" id="filterApply">Filtrar</button>
+        <div class="panel-body">
+          <div id="chainBrokenBox" style="display:none;background:rgba(220,38,38,0.08);border:1px solid var(--accent-red);border-radius:8px;padding:14px 16px;margin-bottom:14px;">
+            <p id="chainExplanation" style="margin:0 0 10px;font-size:0.92rem;line-height:1.5;"></p>
+            <button id="btnReanchor" type="button">Re-sellar cadena ahora</button>
+          </div>
+          <div class="filters-row" style="margin-bottom:14px;">
+            <input type="text" id="filterIp" placeholder="Filtrar por IP">
+            <select id="filterBlocked">
+              <option value="">Todos</option>
+              <option value="true">Solo bloqueados</option>
+              <option value="false">Solo permitidos</option>
+            </select>
+            <select id="filterSensitive">
+              <option value="">Todas las rutas</option>
+              <option value="true">Solo rutas sensibles</option>
+            </select>
+            <button class="btn-mini" id="filterApply">Filtrar</button>
+          </div>
+          <table class="sen-table">
+            <thead>
+              <tr><th>Seq</th><th>Hora</th><th>IP</th><th>Metodo</th><th>Ruta</th><th>Mesa</th><th>Status</th><th>Estado</th></tr>
+            </thead>
+            <tbody id="logBody"></tbody>
+          </table>
+          <div id="logEmpty" class="empty-row" style="display:none;">Sin eventos registrados.</div>
         </div>
-        <table class="sen-table">
-          <thead>
-            <tr><th>Seq</th><th>Hora</th><th>IP</th><th>Metodo</th><th>Ruta</th><th>Mesa</th><th>Status</th><th>Estado</th></tr>
-          </thead>
-          <tbody id="logBody"></tbody>
-        </table>
-        <div id="logEmpty" class="empty-row" style="display:none;">Sin eventos registrados.</div>
       </div>
     </div>
 
@@ -339,6 +425,24 @@
       if (!geo) return '—';
       return [geo.city, geo.country].filter(Boolean).join(', ') || '—';
     }
+
+    function riskBadge(risk) {
+      if (!risk) return '<span class="risk-badge BAJO">BAJO</span>';
+      const color = risk.level === 'ALTO' ? 'var(--accent-red)' : risk.level === 'MEDIO' ? 'var(--accent-amber)' : 'var(--accent-green2)';
+      const title = escapeHtml((risk.reasons || []).join(' · ') || 'sin señales de riesgo');
+      return `<span class="risk-badge ${risk.level}" title="${title}">${risk.level} · ${risk.score}</span>
+        <span class="risk-bar-wrap"><span class="risk-bar" style="width:${risk.score}%;background:${color};"></span></span>`;
+    }
+
+    /* ---- Tabs ---- */
+    function switchTab(tab) {
+      ['resumen', 'peticiones', 'cola', 'tecnico'].forEach(t => {
+        document.getElementById(`panel${t[0].toUpperCase()}${t.slice(1)}`).style.display = t === tab ? 'block' : 'none';
+        document.getElementById(`tab${t[0].toUpperCase()}${t.slice(1)}`).classList.toggle('active', t === tab);
+      });
+      if (tab === 'peticiones') loadReqFeed();
+    }
+    window.switchTab = switchTab;
 
     /* ---- Timeline ---- */
     async function loadTimeline() {
@@ -381,18 +485,22 @@
         const text = document.getElementById('chainText');
         const kpi = document.getElementById('kpiChain');
         const kpiSub = document.getElementById('kpiChainSub');
+        const box = document.getElementById('chainBrokenBox');
         if (result.valid) {
           dot.className = 'chain-dot valid';
           text.textContent = `Integra · ${result.totalEntries} entradas`;
           kpi.textContent = 'INTEGRA';
           kpi.className = 'kpi-val ok';
           kpiSub.textContent = `${result.totalEntries} entradas verificadas`;
+          box.style.display = 'none';
         } else {
           dot.className = 'chain-dot broken';
-          text.textContent = `ROTA en seq ${result.brokenAtSeq} (${result.reason})`;
-          kpi.textContent = 'ROTA';
+          text.textContent = `Necesita atención · registro ${result.brokenAtSeq}`;
+          kpi.textContent = 'REVISAR';
           kpi.className = 'kpi-val danger';
-          kpiSub.textContent = `fallo en seq ${result.brokenAtSeq}`;
+          kpiSub.textContent = `registro ${result.brokenAtSeq} de ${result.totalEntries}`;
+          document.getElementById('chainExplanation').textContent = result.explanation || `El registro ${result.brokenAtSeq} no encaja con el anterior.`;
+          box.style.display = (getUser() || '').endsWith('@snficorp.com') ? 'block' : 'none';
         }
       } catch (ex) {
         showError('Error verificando cadena: ' + (ex.message || ex));
@@ -418,6 +526,7 @@
           <tr>
             <td class="mono">${escapeHtml(q.ip)}</td>
             <td>${escapeHtml(geoLabel(q.geo))}</td>
+            <td>${riskBadge(q.risk)}</td>
             <td><span class="tag ${q.decision === 'BLOCKED' ? 'blocked' : q.decision === 'ALLOWED' ? 'ok' : 'pending'}">${escapeHtml(q.decision)}</span>${q.autoBlocked ? ' <span class="tag blocked">AUTO</span>' : ''}</td>
             <td>${escapeHtml(q.reason || '—')}</td>
             <td class="mono">${fmtTime(q.updatedAt)}</td>
@@ -484,6 +593,51 @@
         showError('Error cargando top IPs: ' + (ex.message || ex));
       }
     }
+
+    /* ---- Peticiones en lenguaje claro ---- */
+    async function loadReqFeed() {
+      try {
+        const blocked = document.getElementById('reqFilter').value;
+        const { events } = await api.sentinelLogHuman(blocked ? { blocked } : {});
+        const feed = document.getElementById('reqFeed');
+        const empty = document.getElementById('reqEmpty');
+        if (!events.length) {
+          feed.innerHTML = '';
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+        feed.innerHTML = events.map(e => `
+          <div class="req-item ${e.blocked ? 'blocked' : ''}">
+            <div class="req-item__icon">${e.blocked ? '⛔' : '✓'}</div>
+            <div class="req-item__body">
+              <div class="req-item__msg">${escapeHtml(e.message)}</div>
+              <div class="req-item__meta">
+                <span>${fmtTime(e.ts)}</span>
+                <span>IP ${escapeHtml(e.ip)}</span>
+                ${e.mesa ? `<span>${escapeHtml(e.mesa)}</span>` : ''}
+                ${e.sensitive ? '<span>ruta sensible</span>' : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+        document.getElementById('reqUpdatedAt').textContent = `actualizado ${fmtTime(new Date())}`;
+      } catch (ex) {
+        showError('Error cargando peticiones: ' + (ex.message || ex));
+      }
+    }
+    document.getElementById('reqFilterApply').addEventListener('click', loadReqFeed);
+
+    document.getElementById('btnReanchor').addEventListener('click', async () => {
+      if (!confirm('Esto re-sella la cadena forense desde el punto roto. El historial no se borra, solo se vuelve a anclar para que pueda verificarse de nuevo. ¿Continuar?')) return;
+      try {
+        const result = await api.sentinelReanchorChain();
+        toast(result.reanchored ? `Cadena re-sellada desde el registro ${result.fixedFrom}` : 'La cadena ya estaba íntegra');
+        await loadChain();
+      } catch (ex) {
+        showError('Error re-sellando cadena: ' + (ex.message || ex));
+      }
+    });
 
     /* ---- Forensic log ---- */
     async function loadLog(filters = {}) {

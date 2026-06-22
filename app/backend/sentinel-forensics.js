@@ -9,13 +9,97 @@ import geoip from 'geoip-lite';
 
 const FORENSIC_SECRET = process.env.SENTINEL_FORENSIC_SECRET || process.env.JWT_SECRET || 'dev-only-secret-cambiar-en-produccion';
 
-const SENSITIVE_PREFIXES = ['/api/elvira/cnmc', '/api/snfi-u2', '/api/u2'];
+// Rutas sensibles (rate limit estricto). Ampliable sin tocar código: el jefe
+// añade prefijos extra via env SENTINEL_EXTRA_SENSITIVE_PATHS (separados por coma)
+// cuando incorpore nuevos puertos/mesas, sin tener que editar este archivo.
+const SENSITIVE_PREFIXES = [
+  '/api/elvira/cnmc', '/api/snfi-u2', '/api/u2',
+  ...(process.env.SENTINEL_EXTRA_SENSITIVE_PATHS || '').split(',').map(p => p.trim()).filter(Boolean),
+];
 const SENSITIVE_LIMIT_PER_MIN = 20;
 const NORMAL_LIMIT_PER_MIN = 120;
 const RATE_WINDOW_MS = 60 * 1000;
 const AUTO_BLOCK_SAME_ROUTE_COUNT = 3;
 const AUTO_BLOCK_SAME_ROUTE_WINDOW_MS = 60 * 60 * 1000; // 1h
 const AUTO_BLOCK_DISTINCT_ROUTES_COUNT = 2;
+
+// Paises marcados como riesgo elevado para el scoring heuristico (configurable, sin terceros).
+// Codigo ISO-2 de geoip-lite. Vacio por defecto — el jefe puede rellenar via env.
+const RISK_COUNTRIES = (process.env.SENTINEL_RISK_COUNTRIES || '').split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+
+const MESA_LABELS = {
+  elvira: 'Elvi-Ra (centro de mando)',
+  reff: 'Rëff (CRM comercial)',
+  snfiu2: 'S-NFI U-2 (datos científicos)',
+  sentinel: 'Sentinel (seguridad)',
+  twin: 'Twin (enlace S-NFI Systems)',
+};
+
+function humanizePath(path) {
+  if (path.startsWith('/api/elvira/cnmc')) return 'informes CNMC';
+  if (path.startsWith('/api/snfi-u2') || path.startsWith('/api/u2')) return 'datos científicos S-NFI U-2';
+  if (path.startsWith('/api/login')) return 'inicio de sesión';
+  if (path.startsWith('/api/sentinel')) return 'panel de seguridad Sentinel';
+  return path;
+}
+
+function geoLabel(geo) {
+  if (!geo) return 'ubicación desconocida';
+  return [geo.city, geo.country].filter(Boolean).join(', ') || 'ubicación desconocida';
+}
+
+/* ---- traduce una entrada forense tecnica a una frase clara para no-tecnicos ---- */
+function humanizeEntry(entry) {
+  const where = geoLabel(entry.geo);
+  const what = humanizePath(entry.path);
+  const who = entry.user ? `el usuario ${entry.user}` : `alguien desde ${entry.ip}`;
+  if (entry.blocked) {
+    if (entry.reason?.startsWith('AUTO-BLOQUEO')) {
+      return `${who} (${where}) intentó acceder repetidamente a ${what}. Sentinel detectó un patrón de ataque y bloqueó la IP automáticamente.`;
+    }
+    if (entry.reason?.includes('dominio')) {
+      return `${who} (${where}) intentó iniciar sesión con un correo no autorizado. Sentinel bloqueó la IP al instante.`;
+    }
+    if (entry.statusCode === 429) {
+      return `${who} (${where}) hizo demasiadas peticiones a ${what} en poco tiempo. Sentinel bloqueó la petición y envió la IP a revisión.`;
+    }
+    return `${who} (${where}) tuvo una petición bloqueada a ${what}. Motivo: ${entry.reason || 'sin especificar'}.`;
+  }
+  return `${who} (${where}) accedió a ${what} sin problemas.`;
+}
+
+/* ---- heuristica propia de riesgo (0-100), sin servicios externos ---- */
+async function computeRiskScore(mongo, ip, geo) {
+  let score = 0;
+  const reasons = [];
+
+  const excessCount = await mongo.collection('ip_excess_log').countDocuments({ ip });
+  if (excessCount > 0) {
+    score += Math.min(excessCount * 15, 45);
+    reasons.push(`${excessCount} exceso(s) de tasa registrados`);
+  }
+
+  const failedLogins = await mongo.collection('login_attempts').countDocuments({ ip, ok: false });
+  if (failedLogins > 0) {
+    score += Math.min(failedLogins * 10, 30);
+    reasons.push(`${failedLogins} intento(s) de login fallido`);
+  }
+
+  const invalidDomainAttempts = await mongo.collection('login_attempts').countDocuments({ ip, reason: 'dominio_no_autorizado' });
+  if (invalidDomainAttempts > 0) {
+    score += 40;
+    reasons.push('intento de login con dominio no autorizado');
+  }
+
+  if (geo?.country && RISK_COUNTRIES.includes(geo.country)) {
+    score += 15;
+    reasons.push(`origen en país marcado como riesgo (${geo.country})`);
+  }
+
+  score = Math.min(score, 100);
+  const level = score >= 70 ? 'ALTO' : score >= 35 ? 'MEDIO' : 'BAJO';
+  return { score, level, reasons };
+}
 
 function isSensitivePath(path) {
   return SENSITIVE_PREFIXES.some(p => path.startsWith(p));
@@ -35,35 +119,28 @@ function signHmac(hash) {
 }
 
 export function createSentinelForensics({ mongo, busEmit }) {
-  let lastHash = '0'.repeat(64); // genesis
-  let seqCounter = 0;
-  let chainLoaded = false;
-  let chainQueue = Promise.resolve();
-
-  async function loadChainTail() {
-    if (chainLoaded) return;
-    chainLoaded = true;
-    const last = await mongo.collection('forensic_log').find().sort({ seq: -1 }).limit(1).toArray();
-    if (last.length) {
-      lastHash = last[0].hash;
-      seqCounter = last[0].seq;
-    }
+  // seq/hash se derivan SIEMPRE de Mongo, nunca de memoria de proceso.
+  // Motivo: en un redeploy con rolling restart (Coolify) el contenedor viejo
+  // sigue vivo unos segundos a la vez que el nuevo ya arranca — dos procesos
+  // distintos escribiendo la misma cadena con su propio lastHash/seqCounter
+  // en memoria garantiza una bifurcación (seq duplicado o hash que no encaja).
+  // Por eso cada append relee la cola real con findOneAndUpdate atómico sobre
+  // un contador en Mongo, y reintenta si otro proceso ganó la carrera.
+  async function nextSeq() {
+    const doc = await mongo.collection('forensic_seq').findOneAndUpdate(
+      { _id: 'counter' },
+      { $inc: { value: 1 } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    return doc.value;
   }
 
-  // Serializa los appends: seq/hash deben calcularse y persistirse de forma
-  // atómica por proceso, si no, llamadas concurrentes pisan lastHash/seqCounter
-  // y rompen la cadena (mismatch en el seq que pierde la carrera).
-  function appendForensicEntry(fields) {
-    const task = chainQueue.then(() => appendForensicEntryUnsafe(fields));
-    chainQueue = task.then(() => undefined, () => undefined);
-    return task;
-  }
-
-  async function appendForensicEntryUnsafe(fields) {
-    await loadChainTail();
-    seqCounter += 1;
+  async function appendForensicEntry(fields, attempt = 0) {
+    const seq = await nextSeq();
+    const tail = seq === 1 ? null : await mongo.collection('forensic_log').findOne({ seq: seq - 1 });
+    const prevHash = tail ? tail.hash : '0'.repeat(64);
     const entry = {
-      seq: seqCounter,
+      seq,
       ts: new Date().toISOString(),
       ip: fields.ip,
       geo: fields.geo,
@@ -75,32 +152,74 @@ export function createSentinelForensics({ mongo, busEmit }) {
       statusCode: fields.statusCode ?? null,
       blocked: !!fields.blocked,
       reason: fields.reason || null,
-      prevHash: lastHash,
+      prevHash,
     };
-    const hash = crypto.createHash('sha256').update(lastHash + canonical(entry)).digest('hex');
+    const hash = crypto.createHash('sha256').update(prevHash + canonical(entry)).digest('hex');
     const hmac = signHmac(hash);
     const doc = { _id: crypto.randomUUID(), ...entry, hash, hmac };
-    await mongo.collection('forensic_log').insertOne(doc);
-    lastHash = hash;
+    try {
+      await mongo.collection('forensic_log').insertOne(doc);
+    } catch (err) {
+      // seq duplicado (carrera con otro proceso): reintenta con seq nuevo.
+      if (err?.code === 11000 && attempt < 5) return appendForensicEntry(fields, attempt + 1);
+      throw err;
+    }
     return doc;
   }
 
   async function verifyChain() {
-    await loadChainTail();
     const all = await mongo.collection('forensic_log').find().sort({ seq: 1 }).toArray();
     let prev = '0'.repeat(64);
     for (const entry of all) {
       const expectedHash = crypto.createHash('sha256').update(prev + canonical(entry)).digest('hex');
       if (expectedHash !== entry.hash) {
-        return { valid: false, brokenAtSeq: entry.seq, reason: 'hash_mismatch' };
+        return {
+          valid: false, brokenAtSeq: entry.seq, reason: 'hash_mismatch', totalEntries: all.length,
+          explanation: `El registro número ${entry.seq} no encaja con el anterior. Suele pasar cuando el servidor se reinicia justo en mitad de un redeploy y dos procesos escriben a la vez. Los registros siguen guardados, pero a partir de aquí la cadena no se puede verificar matemáticamente. Un Admin puede "re-sellar" la cadena para que vuelva a quedar protegida desde ahora.`,
+        };
       }
       const expectedHmac = signHmac(entry.hash);
       if (expectedHmac !== entry.hmac) {
-        return { valid: false, brokenAtSeq: entry.seq, reason: 'hmac_mismatch' };
+        return {
+          valid: false, brokenAtSeq: entry.seq, reason: 'hmac_mismatch', totalEntries: all.length,
+          explanation: `El registro número ${entry.seq} tiene una firma que no coincide. Esto indica que el dato pudo modificarse fuera de Sentinel. Revisar con prioridad.`,
+        };
       }
       prev = entry.hash;
     }
     return { valid: true, totalEntries: all.length };
+  }
+
+  /* ---- re-sella la cadena desde el punto roto: no borra historial, ----
+     pero re-ancla el hash a partir de aqui para que vuelva a verificar limpio ---- */
+  async function reanchorChain(decidedBy) {
+    const check = await verifyChain();
+    if (check.valid) return { reanchored: false, reason: 'cadena_ya_integra' };
+
+    const all = await mongo.collection('forensic_log').find().sort({ seq: 1 }).toArray();
+    let prev = '0'.repeat(64);
+    let fixedFrom = null;
+    for (const entry of all) {
+      const expectedHash = crypto.createHash('sha256').update(prev + canonical(entry)).digest('hex');
+      if (expectedHash !== entry.hash || fixedFrom !== null) {
+        if (fixedFrom === null) fixedFrom = entry.seq;
+        const hash = crypto.createHash('sha256').update(prev + canonical({ ...entry, prevHash: prev })).digest('hex');
+        const hmac = signHmac(hash);
+        await mongo.collection('forensic_log').updateOne(
+          { _id: entry._id },
+          { $set: { prevHash: prev, hash, hmac, reanchoredAt: new Date(), reanchoredBy: decidedBy } },
+        );
+        prev = hash;
+      } else {
+        prev = entry.hash;
+      }
+    }
+    busEmit?.({
+      id: crypto.randomUUID(), ts: new Date().toISOString(), origin: 'SENTINEL', dest: 'ELVI-RA',
+      type: 'event', state: 'INFO', label: `CADENA FORENSE RE-SELLADA · desde seq ${fixedFrom} · por ${decidedBy}`,
+      payload: { fixedFrom, decidedBy },
+    });
+    return { reanchored: true, fixedFrom };
   }
 
   /* ---- rate limiting dinámico sobre Mongo (sin Redis) ---- */
@@ -157,6 +276,13 @@ export function createSentinelForensics({ mongo, busEmit }) {
       });
     }
     return { autoBlocked: false };
+  }
+
+  /* ---- enchufa Sentinel a cualquier app/puerto Express en una linea ----
+     util cuando se añaden mas puertos (Twin, mesas nuevas): basta con
+     sentinelForensics.attach(esaApp, mesaForPathDeEsePuerto) ---- */
+  function attach(expressApp, mesaForPath) {
+    expressApp.use(middleware(mesaForPath));
   }
 
   /* ---- middleware global ---- */
@@ -219,6 +345,23 @@ export function createSentinelForensics({ mongo, busEmit }) {
     return { total, events };
   }
 
+  /* ---- mismo log, en frases claras para usuarios sin conocimiento tecnico ---- */
+  async function listForensicLogHuman({ ip, blocked, limit = 100, offset = 0 } = {}) {
+    const q = {};
+    if (ip) q.ip = ip;
+    if (blocked != null) q.blocked = blocked === 'true' || blocked === true;
+    const total = await mongo.collection('forensic_log').countDocuments(q);
+    const events = await mongo.collection('forensic_log').find(q).sort({ seq: -1 }).skip(Number(offset)).limit(Math.min(Number(limit), 500)).toArray();
+    return {
+      total,
+      events: events.map(e => ({
+        seq: e.seq, ts: e.ts, ip: e.ip, blocked: e.blocked, sensitive: e.sensitive,
+        mesa: e.mesa ? (MESA_LABELS[e.mesa] || e.mesa) : null,
+        message: humanizeEntry(e),
+      })),
+    };
+  }
+
   async function ipStats() {
     const top = await mongo.collection('forensic_log').aggregate([
       { $group: { _id: '$ip', total: { $sum: 1 }, blocked: { $sum: { $cond: ['$blocked', 1, 0] } }, geo: { $first: '$geo' }, lastSeen: { $max: '$ts' } } },
@@ -229,7 +372,41 @@ export function createSentinelForensics({ mongo, busEmit }) {
   }
 
   async function listReviewQueue() {
-    return mongo.collection('ip_review_queue').find().sort({ updatedAt: -1 }).limit(200).toArray();
+    const queue = await mongo.collection('ip_review_queue').find().sort({ updatedAt: -1 }).limit(200).toArray();
+    return Promise.all(queue.map(async q => ({ ...q, risk: await computeRiskScore(mongo, q.ip, q.geo) })));
+  }
+
+  /* ---- registro de intentos de login + bloqueo instantaneo por dominio no autorizado ---- */
+  async function registerLoginAttempt({ ip, username, ok, reason }) {
+    const now = new Date();
+    const geo = geoip.lookup(ip.replace(/^::ffff:/, '')) || null;
+    await mongo.collection('login_attempts').insertOne({ ip, username, ok, reason: reason || null, geo, ts: now });
+
+    if (reason === 'dominio_no_autorizado') {
+      await mongo.collection('ip_review_queue').updateOne(
+        { ip },
+        { $set: {
+            ip, geo, decision: 'BLOCKED', autoBlocked: true,
+            reason: `AUTO-BLOQUEO · intento de login con correo no autorizado (${username})`,
+            decidedAt: now, updatedAt: now,
+          },
+          $setOnInsert: { createdAt: now } },
+        { upsert: true },
+      );
+      busEmit?.({
+        id: crypto.randomUUID(), ts: now.toISOString(), origin: 'SENTINEL', dest: 'ELVI-RA',
+        type: 'alert', state: 'BLOCKED',
+        label: `INTENTO DE LOGIN NO AUTORIZADO · ${ip} · correo "${username}"`,
+        payload: { ip, geo, username },
+      });
+      await appendForensicEntry({
+        ip, geo, method: 'POST', path: '/api/login', mesa: null, sensitive: false,
+        user: username, statusCode: 403, blocked: true,
+        reason: `AUTO-BLOQUEO · login con dominio no autorizado (${username})`,
+      });
+      return { blocked: true };
+    }
+    return { blocked: false };
   }
 
   async function decideReview(ip, decision, decidedBy) {
@@ -278,6 +455,7 @@ export function createSentinelForensics({ mongo, busEmit }) {
   }
 
   return {
-    middleware, listForensicLog, ipStats, listReviewQueue, decideReview, manualBlock, trafficTimeline, exportIpReport, verifyChain, isSensitivePath,
+    middleware, attach, listForensicLog, listForensicLogHuman, ipStats, listReviewQueue, decideReview, manualBlock,
+    trafficTimeline, exportIpReport, verifyChain, reanchorChain, isSensitivePath, registerLoginAttempt,
   };
 }

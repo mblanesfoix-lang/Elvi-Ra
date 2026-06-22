@@ -103,6 +103,8 @@ Object.assign(api, {
   sentinelIpReport:  (ip) => req('GET', `/api/sentinel/review-queue/${encodeURIComponent(ip)}/report`),
   sentinelTimeline:  (minutes = 60) => req('GET', `/api/sentinel/traffic-timeline?minutes=${minutes}`),
   sentinelBlockIp:   (ip, reason) => req('POST', '/api/sentinel/block-ip', { ip, reason }),
+  sentinelLogHuman:  (params = {}) => req('GET', `/api/sentinel/forensic-log-human?${new URLSearchParams(params).toString()}`),
+  sentinelReanchorChain: () => req('POST', '/api/sentinel/reanchor-chain'),
 });
 
 export function toast(msg) {
