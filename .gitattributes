@@ -1,0 +1,10 @@
+# Normaliza finales de línea para despliegue cruzado Windows -> Linux
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.mp4 binary
+*.node binary

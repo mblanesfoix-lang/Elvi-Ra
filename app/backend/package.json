@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node --env-file=.env server.js",
+    "dev": "node --env-file=.env --watch server.js",
+    "kill-port": "node -e \"const p=process.env.PORT||5173;require('child_process').execSync(process.platform==='win32'?`powershell -Command \\\"Get-NetTCPConnection -LocalPort ${p} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\\\"`:`fuser -k ${p}/tcp || true`,{stdio:'inherit'})\"",
+    "fresh": "npm run kill-port && npm run dev"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
@@ -15,6 +20,8 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.5.2",
-    "jsonwebtoken": "^9.0.3"
+    "geoip-lite": "^2.0.3",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.3.0"
   }
 }

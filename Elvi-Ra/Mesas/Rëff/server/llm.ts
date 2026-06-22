@@ -60,28 +60,28 @@ async function _streamAnthropic(
   const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
   try {
-    const stream = await client.messages.stream({
+    // Non-streaming call: the SDK's streaming iterator hangs after
+    // `message_start` on this Node/Windows setup, so we request the
+    // full response in one shot and emit it as a single chunk.
+    const result = await client.messages.create({
       model: ANTHROPIC_MODEL,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages,
     });
 
-    for await (const event of stream) {
-      if (isClosed()) break;
-      if (
-        event.type === 'content_block_delta' &&
-        event.delta.type === 'text_delta' &&
-        event.delta.text
-      ) {
-        onChunk(event.delta.text);
-      }
-    }
+    if (isClosed()) return;
 
-    const final = await stream.finalMessage();
+    const fullText = result.content
+      .filter((b) => b.type === 'text')
+      .map((b) => (b as { text: string }).text)
+      .join('');
+
+    if (fullText) onChunk(fullText);
+
     onDone({
-      inputTokens:  final.usage.input_tokens,
-      outputTokens: final.usage.output_tokens,
+      inputTokens: result.usage.input_tokens,
+      outputTokens: result.usage.output_tokens,
     });
   } catch (err: any) {
     onError(err instanceof Error ? err : new Error(String(err)));

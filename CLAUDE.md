@@ -120,10 +120,7 @@ Penalización fuerte: biogás/anaerobia clásica, sanciones CNMC, opacidad, inco
 
 ## Credenciales (dev)
 
-| Usuario | Contraseña |
-|---------|-----------|
-| Marc Blanes | Marc2005 |
-| Nour | Nour 2026 |
+Usuarios y contraseñas dev: ver `.env` local (no trackeado). No commitear credenciales en texto plano.
 
 Producción: migrar a JWT + DB real + hashing.
 
@@ -174,9 +171,43 @@ Qué requiere accesos externos:
 - Envío email real (SMTP/SendGrid)
 - Integración Sentinel + Herzog reales (cuando existan)
 
+## Context Model 1 (briefing doctrinal — fuente: "Contex Model 1.txt")
+
+### Ecosistema soberano (dominios, no terceros)
+
+| Dominio | Rol |
+|---------|-----|
+| S-NFI Systems | Capa física de ejecución y control industrial |
+| Elvi-Ra + Rëff | Capa cognitiva: orquestación + análisis/auditoría convergente |
+| S-NFI Factory | Departamento fabricación |
+| S-NFI U-2 | Ciencia e I+D a nivel doctoral, límites químicos |
+| S-NFI Resilience | Estabilización red eléctrica, cálculos BSS |
+| Legal & Fiscal | Cumplimiento normativo |
+| Pactvm Viridi | Motor regulador, filtra toda actividad Elvi-Ra/terceros |
+
+### Soberanía técnica
+
+- Comunicación Elvi-Ra/Rëff <-> S-NFI Systems: **endpoints privados en puertos cerrados exclusivamente**.
+- Infraestructura: servidores físicos propios, Debian/Kubernetes. Cero nubes públicas para núcleo lógico.
+- Credenciales: identidad criptográfica verificable, gestión centralizada.
+
+### Seguridad grado militar
+
+- Fallo operativo = sanciones CNMC o pérdida patentes/certificaciones.
+- Logs absolutos e inmutables. Todo acceso registrado permanentemente.
+- Solo Admin autoriza directrices críticas. Pactvm Viridi = estándar cumplimiento industrial internacional.
+
+### Prioridades de asalto (orden obligatorio)
+
+1. **Twin Elvi-Ra <-> S-NFI Systems**: enlace seguro (endpoints privados puertos cerrados).
+2. **Pipeline Dictamen de Soberanía**: lead/dato externo -> Pactvm Viridi -> Rëff -> Dictamen en dashboard -> autorización Admin.
+
+> **Doctrina**: Infraestructura antes que interfaz.
+
 ## Referencias
 
 - Knowledge base S-NFI: `Elvi-Ra/Elvi-Ra Zone/BackEnd/SNFI Base Conocimiento.txt`
 - Spec Customer Management: `Elvi-Ra/Mesas/Costumer Managment.txt`
 - Flujos: `Elvi-Ra/Elvi-Ra Zone/BackEnd/Elvi-Ra Context.txt`
 - README boceto: `app/README.md`
+- Briefing doctrinal: `Contex Model 1.txt`

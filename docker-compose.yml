@@ -4,23 +4,25 @@ version: "3.9"
 # ELVI-RA · Stack soberano
 # Despliegue: Coolify → "Docker Compose" → apunta a este archivo.
 #
-# Variables de entorno requeridas en el panel de Coolify:
-#   ANTHROPIC_API_KEY   — solo si LLM_PROVIDER=anthropic
-#   LLM_PROVIDER        — "anthropic" | "ollama"  (default: anthropic)
-#   OLLAMA_MODEL        — "llama3:70b" | "mistral:7b" | etc.
-#   JWT_SECRET          — secreto para tokens Rëff (genera con: openssl rand -hex 32)
+# Variables de entorno requeridas (panel Coolify o archivo .env):
+#   ANTHROPIC_API_KEY   — sk-ant-... (obligatorio si LLM_PROVIDER=anthropic)
+#   JWT_SECRET          — openssl rand -hex 32  (obligatorio)
+#   ESIOS_API_KEY       — token ESIOS/REE (opcional, activa endpoints curtailment)
+#   CORS_ORIGIN         — dominio(s) permitido(s), coma-separados (obligatorio en producción)
 #   NODE_ENV            — production
+#   LLM_PROVIDER        — "anthropic" | "ollama"  (default: anthropic)
+#   OLLAMA_MODEL        — "llama3:70b" | "mistral:7b" (solo si LLM_PROVIDER=ollama)
+#   ANTHROPIC_MODEL     — claude-haiku-4-5-20251001 (optional override)
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
 
-  # ── Ollama · Motor LLM local ────────────────────────────────────────────────
+  # ── Ollama · Motor LLM local (opcional) ────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
     volumes:
       - ollama-models:/root/.ollama
-    # Puerto solo accesible dentro de la red Docker — no expuesto a internet
     expose:
       - "11434"
     networks:
@@ -34,11 +36,11 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-  # ── Elvi-Ra · Backend principal ────────────────────────────────────────────
+  # ── Elvi-Ra · Backend + Frontend principal ─────────────────────────────────
   elvira:
     build:
-      context: ./app
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: app/Dockerfile
     restart: unless-stopped
     depends_on:
       - ollama
@@ -49,43 +51,27 @@ services:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:70b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-7}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      ESIOS_API_KEY: ${ESIOS_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # Puerto interno reservado para Twin Elvi-Ra <-> S-NFI Systems.
+      # ENABLE_TWIN_PORT=true lo activa, pero NO se expone en "ports" abajo
+      # — solo accesible dentro de elvira-net hasta que el Twin exista.
+      ENABLE_TWIN_PORT: ${ENABLE_TWIN_PORT:-false}
+      TWIN_PORT: 5174
     volumes:
       - elvira-data:/app/backend/data
     ports:
       - "5173:5173"
-    networks:
-      - elvira-net
-
-  # ── Rëff · Agente de convergencia ──────────────────────────────────────────
-  reff:
-    build:
-      context: ./Elvi-Ra/Mesas/Rëff
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - ollama
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      PORT: 3001
-      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:70b}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
-      JWT_SECRET: ${JWT_SECRET:-}
-      DB_PATH: /app/data/snfi.db
-    volumes:
-      - reff-data:/app/data
     expose:
-      - "3001"
+      - "5174"
     networks:
       - elvira-net
 
 volumes:
   ollama-models:
   elvira-data:
-  reff-data:
 
 networks:
   elvira-net:

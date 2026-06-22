@@ -4,12 +4,12 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { rateLimit } from 'express-rate-limit';
-import { seedDatabase, getUserByUsername } from './db.js';
-import { signToken } from './auth.js';
-import chatRoutes from './routes/chat.routes.js';
+import { seedDatabase } from './db.js';
 import authRoutes from './routes/auth.routes.js';
-import adminRoutes from './routes/admin.routes.js';
-import complianceRoutes from './routes/compliance.routes.js';
+import sheetsRoutes from './routes/sheets.routes.js';
+import companiesRoutes from './routes/companies.routes.js';
+import geoRoutes from './routes/geo.routes.js';
+import herzogRoutes from './routes/herzog.routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +18,7 @@ const PORT = Number(process.env.PORT || 3001);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 if (!process.env.ANTHROPIC_API_KEY) {
-  console.warn('[Rëff][WARN] ANTHROPIC_API_KEY no está definida en .env — el chat fallará.');
+  console.warn('[Rëff][WARN] ANTHROPIC_API_KEY no está definida en .env — Herzog fallará.');
 }
 
 seedDatabase();
@@ -33,7 +33,7 @@ app.use(express.json({ limit: '1mb' }));
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 30,
+  limit: 60,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   keyGenerator: (req) => req.ip || 'anon',
@@ -46,17 +46,11 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'reff', env: NODE_ENV });
 });
 
-app.get('/api/guest-token', (_req, res) => {
-  const userRow = getUserByUsername('marc');
-  if (!userRow) return res.status(500).json({ error: 'usuario marc no encontrado en DB' });
-  const token = signToken({ userId: userRow.id });
-  res.json({ token });
-});
-
 app.use('/api/auth', authRoutes);
-app.use('/api/chat', chatRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/elvira/compliance', complianceRoutes);
+app.use('/api/crm', sheetsRoutes);
+app.use('/api/crm', companiesRoutes);
+app.use('/api/geo', geoRoutes);
+app.use('/api/herzog', herzogRoutes);
 
 if (NODE_ENV === 'production') {
   const clientDir = path.resolve(__dirname, '../../dist/client');

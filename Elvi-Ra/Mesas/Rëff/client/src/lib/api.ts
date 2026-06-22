@@ -1,26 +1,39 @@
 const API_URL = import.meta.env.VITE_API_URL || '';
+const TOKEN_KEY = 'reff_token';
+const USER_KEY = 'reff_user';
 
 export interface User {
-  id: number;
+  id: string;
   username: string;
   displayName: string;
   avatarUrl?: string | null;
-  agents: string[];
 }
 
-export interface Agent {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  color: string;
-  welcomeMessage: string;
-  enabled: boolean;
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
+export function getStoredUser(): User | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as User;
+  } catch {
+    return null;
+  }
+}
+
+export function clearSession(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+// Cierra también la sesión de Elvi-Ra (mismo localStorage, mismo origen) para que
+// el logout desde Rëff cierre sesión en toda la plataforma.
+export function clearElviraSession(): void {
+  localStorage.removeItem('elvira_token');
+  localStorage.removeItem('elvira_user');
+  localStorage.removeItem('elvira_active_sheet');
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -28,82 +41,185 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body != null) {
     headers.set('Content-Type', 'application/json');
   }
+  const token = getToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) clearSession();
     throw new Error((data as any).error || `Error HTTP ${res.status}`);
   }
   return data as T;
 }
 
-export async function fetchAgents() {
-  return request<{ agents: Agent[] }>('/api/chat/agents');
+/* ---------- sheets ---------- */
+
+export interface Sheet {
+  id: number;
+  name: string;
+  position: number;
+  companyCount: number;
 }
 
-export interface StreamCallbacks {
-  onChunk: (text: string) => void;
-  onDone: () => void;
-  onError: (msg: string) => void;
+export async function fetchSheets() {
+  return request<{ sheets: Sheet[] }>('/api/crm/sheets');
 }
 
-export async function streamChat(
-  agentId: string,
-  messages: ChatMessage[],
-  signal: AbortSignal,
-  cb: StreamCallbacks
-) {
-  const res = await fetch(`${API_URL}/api/chat/${agentId}`, {
+export async function createSheet(name: string) {
+  return request<{ sheet: Sheet }>('/api/crm/sheets', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify({ messages }),
-    signal,
+    body: JSON.stringify({ name }),
   });
+}
 
-  if (!res.ok || !res.body) {
-    let msg = `Error HTTP ${res.status}`;
-    try {
-      const data = await res.json();
-      msg = data.error || msg;
-    } catch {
-      /* noop */
-    }
-    cb.onError(msg);
-    return;
-  }
+export async function renameSheet(id: number, name: string) {
+  return request<{ sheet: Sheet }>(`/api/crm/sheets/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  });
+}
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+export async function deleteSheet(id: number) {
+  return request<{ ok: true }>(`/api/crm/sheets/${id}`, { method: 'DELETE' });
+}
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+/* ---------- companies ---------- */
 
-    let idx;
-    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-      const raw = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
+export type CompanyStatus = 'estrategico' | 'operativo' | 'pendiente' | 'no_candidato';
 
-      let event = 'message';
-      let data = '';
-      for (const line of raw.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) data += line.slice(5).trim();
-      }
-      if (!data) continue;
+export interface CompanyTask {
+  id: number;
+  title: string;
+  done: boolean;
+  dueDate: string | null;
+  createdAt: string;
+}
 
-      try {
-        const parsed = JSON.parse(data);
-        if (event === 'chunk') cb.onChunk(parsed.text || '');
-        else if (event === 'done') cb.onDone();
-        else if (event === 'error') cb.onError(parsed.message || 'Error');
-      } catch {
-        /* fragmento incompleto */
-      }
-    }
-  }
+export interface Company {
+  id: number;
+  sheetId: number;
+  name: string;
+  country: string;
+  city: string;
+  lat: number;
+  lng: number;
+  status: CompanyStatus;
+  sector: string | null;
+  tonnageYear: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tasks: CompanyTask[];
+}
+
+export interface CompanyInput {
+  name: string;
+  country: string;
+  city: string;
+  lat: number;
+  lng: number;
+  status?: CompanyStatus;
+  sector?: string | null;
+  tonnageYear?: number | null;
+  notes?: string | null;
+}
+
+export async function fetchCompanies(sheetId: number) {
+  return request<{ companies: Company[] }>(`/api/crm/sheets/${sheetId}/companies`);
+}
+
+export async function createCompany(sheetId: number, input: CompanyInput) {
+  return request<{ company: Company }>(`/api/crm/sheets/${sheetId}/companies`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateCompany(id: number, input: Partial<CompanyInput> & { sheetId?: number }) {
+  return request<{ company: Company }>(`/api/crm/companies/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteCompany(id: number) {
+  return request<{ ok: true }>(`/api/crm/companies/${id}`, { method: 'DELETE' });
+}
+
+export async function addCompanyTask(companyId: number, title: string, dueDate?: string | null) {
+  return request<{ task: CompanyTask }>(`/api/crm/companies/${companyId}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify({ title, dueDate }),
+  });
+}
+
+export async function updateCompanyTask(taskId: number, input: Partial<Pick<CompanyTask, 'title' | 'done' | 'dueDate'>>) {
+  return request<{ task: CompanyTask }>(`/api/crm/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteCompanyTask(taskId: number) {
+  return request<{ ok: true }>(`/api/crm/tasks/${taskId}`, { method: 'DELETE' });
+}
+
+/* ---------- geo ---------- */
+
+export interface CityOption {
+  city: string;
+  lat: number;
+  lng: number;
+}
+
+export async function fetchCountries() {
+  return request<{ countries: string[] }>('/api/geo/countries');
+}
+
+export async function fetchCities(country: string) {
+  return request<{ cities: CityOption[] }>(`/api/geo/cities?country=${encodeURIComponent(country)}`);
+}
+
+export interface GlobeCity {
+  city: string;
+  country: string;
+  lat: number;
+  lng: number;
+  companies: { id: number; name: string; status: CompanyStatus; sheetId: number }[];
+}
+
+export async function fetchGlobeCities() {
+  return request<{ cities: GlobeCity[] }>('/api/geo/globe');
+}
+
+/* ---------- Herzog ---------- */
+
+export interface HerzogResult {
+  scores: { W: number; I: number; S: number; M: number; E: number; R: number };
+  overall: number;
+  classification: 'ESTRATEGICO' | 'OPERATIVO' | 'NO_CANDIDATO';
+  summary: string;
+  highlights: string[];
+  risks: string[];
+}
+
+export async function runHerzogAudit(companyName: string, text: string) {
+  return request<{ result: HerzogResult }>('/api/herzog/audit', {
+    method: 'POST',
+    body: JSON.stringify({ companyName, text }),
+  });
+}
+
+export interface HerzogAudit {
+  id: number;
+  companyName: string;
+  inputText: string;
+  result: HerzogResult;
+  createdAt: string;
+}
+
+export async function fetchHerzogHistory() {
+  return request<{ audits: HerzogAudit[] }>('/api/herzog/history');
 }

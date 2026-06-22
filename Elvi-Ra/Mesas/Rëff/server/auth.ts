@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { getUserById, getUserAgents } from './db.js';
+import { getUserById } from './db.js';
 import { Request, Response, NextFunction } from 'express';
 
 const DEV_JWT_SECRET = 'snfi-dev-secret-local-only';
@@ -30,7 +30,6 @@ export interface AuthUser {
   username: string;
   displayName: string;
   avatarUrl: string | null;
-  agents: string[];
 }
 
 declare global {
@@ -41,26 +40,31 @@ declare global {
   }
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'Token ausente' });
+    res.status(401).json({ error: 'Token ausente' });
+    return;
   }
   const payload = verifyToken(token) as { userId?: string } | null;
   if (!payload) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+    res.status(401).json({ error: 'Token inválido o expirado' });
+    return;
   }
-  const userRow = getUserById(payload.userId!);
-  if (!userRow) {
-    return res.status(401).json({ error: 'Usuario no encontrado' });
-  }
-  req.user = {
-    id: userRow.id,
-    username: userRow.username,
-    displayName: userRow.display_name,
-    avatarUrl: userRow.avatar_url ?? null,
-    agents: getUserAgents(userRow.id),
-  };
-  next();
+  getUserById(payload.userId!)
+    .then((userRow) => {
+      if (!userRow) {
+        res.status(401).json({ error: 'Usuario no encontrado' });
+        return;
+      }
+      req.user = {
+        id: userRow.id,
+        username: userRow.username,
+        displayName: userRow.display_name,
+        avatarUrl: userRow.avatar_url ?? null,
+      };
+      next();
+    })
+    .catch(next);
 }

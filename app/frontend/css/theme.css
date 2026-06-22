@@ -533,14 +533,16 @@ table.tbl tbody tr:hover { background: rgba(0,168,120,0.05); }
 }
 .login-card h1 {
   font-family: var(--font-display);
-  font-size: clamp(1.5rem, 2.4vw, 2.2rem);
+  font-size: clamp(1.3rem, 1.9vw, 1.7rem);
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   margin-bottom: 6px;
-  line-height: 1.0;
+  line-height: 1.25;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 @media (max-height: 820px) {
-  .login-card h1 { font-size: clamp(1.3rem, 2vw, 1.8rem); }
+  .login-card h1 { font-size: clamp(1.2rem, 1.7vw, 1.5rem); }
 }
 .login-card h1 em {
   font-style: normal;
@@ -832,6 +834,95 @@ main.container > header + * { margin-top: 28px; }
 /* Generic dot */
 .dot {
   display: inline-block;
+}
+
+/* ============================================================
+   MESA STATUS — health panel (dashboard)
+   ============================================================ */
+.mesa-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.mesa-status-card {
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mesa-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mesa-status-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.mesa-status-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-dim);
+}
+.mesa-status-dot.ok {
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+  animation: pulse-ok 2s ease-in-out infinite;
+}
+.mesa-status-dot.warn {
+  background: var(--warn);
+  box-shadow: 0 0 10px var(--warn);
+  animation: pulse-warn 1.4s ease-in-out infinite;
+}
+.mesa-status-dot.bad {
+  background: var(--bad);
+  box-shadow: 0 0 10px var(--bad);
+  animation: pulse-bad 1s ease-in-out infinite;
+}
+.mesa-status-dot.checking {
+  background: var(--text-dim);
+  animation: pulse-checking 1s ease-in-out infinite;
+}
+@keyframes pulse-ok {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 10px var(--ok); }
+  50%      { opacity: 0.55; transform: scale(0.75); box-shadow: 0 0 4px var(--ok); }
+}
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 10px var(--warn); }
+  50%      { opacity: 0.5; transform: scale(0.8); box-shadow: 0 0 4px var(--warn); }
+}
+@keyframes pulse-bad {
+  0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 10px var(--bad); }
+  50%      { opacity: 0.4; transform: scale(0.85); box-shadow: 0 0 5px var(--bad); }
+}
+@keyframes pulse-checking {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+.mesa-status-label {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.mesa-status-label.ok   { color: var(--ok); }
+.mesa-status-label.warn { color: var(--warn); }
+.mesa-status-label.bad  { color: var(--bad); }
+.mesa-status-detail {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.mesa-status-error {
+  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-size: 0.76rem;
+  color: var(--bad);
+  word-break: break-word;
 }
 
 /* ============================================================

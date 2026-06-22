@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentinel · Seguridad &amp; Telemetria · S-NFI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Syne:wght@600;700;800&family=Inter:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="icon" type="image/png" href="/assets/logo-snfi.png">
+  <style>
+    .sen-hero {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-top: 2px solid var(--accent-red);
+      margin-bottom: 28px;
+      padding: 32px 36px;
+    }
+    .sen-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--font-mono); font-size: 0.6rem;
+      letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--text-muted); margin-bottom: 14px;
+    }
+    .sen-badge__dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--accent-red); box-shadow: 0 0 10px var(--accent-red);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(0.6); opacity: 0.4; }
+    }
+    .sen-hero__title {
+      font-family: var(--font-display); font-size: clamp(1.8rem, 3.6vw, 2.6rem);
+      font-weight: 800; letter-spacing: -0.04em; line-height: 1.0; margin: 0 0 10px;
+    }
+    .sen-hero__title em { font-style: normal; color: var(--accent-red); }
+    .sen-hero__sub {
+      font-size: 0.88rem; color: var(--text-muted); max-width: 620px; line-height: 1.65; margin: 0;
+    }
+
+    .kpi-grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 0;
+      border: 1px solid var(--border-mid); margin-bottom: 24px; background: var(--bg-card);
+    }
+    @media (max-width: 1000px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+    .kpi-cell {
+      padding: 20px 22px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      position: relative; min-width: 0;
+    }
+    .kpi-cell:last-child { border-right: none; }
+    .kpi-cell.alert { background: rgba(216,3,0,0.03); }
+    .kpi-cell.alert::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; background: var(--accent-red); }
+    .kpi-label {
+      font-family: var(--font-mono); font-size: 0.55rem; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+    }
+    .kpi-val {
+      font-family: var(--font-display); font-size: clamp(1.1rem, 2vw, 1.7rem); font-weight: 800;
+      letter-spacing: -0.04em; color: var(--text-primary);
+    }
+    .kpi-val.danger { color: var(--accent-red); }
+    .kpi-val.ok { color: var(--accent-green); }
+    .kpi-unit { font-family: var(--font-mono); font-size: 0.56rem; color: var(--text-dim); margin-top: 6px; }
+
+    .panel-section {
+      background: var(--bg-card); border: 1px solid var(--border-mid);
+      border-top: 2px solid var(--text-primary); margin-bottom: 22px; overflow: hidden;
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 22px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px;
+    }
+    .panel-title {
+      font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--text-muted);
+    }
+    .panel-badge { font-family: var(--font-mono); font-size: 0.58rem; color: var(--text-dim); }
+    .panel-body { padding: 20px 22px; }
+
+    /* timeline barras */
+    .tl-track {
+      display: flex; align-items: flex-end; gap: 1px; height: 90px; margin-bottom: 6px;
+    }
+    .tl-bar {
+      flex: 1; min-height: 2px; border-radius: 1px 1px 0 0; background: var(--accent-green);
+      opacity: 0.55; cursor: pointer; transition: opacity 0.12s; position: relative;
+    }
+    .tl-bar:hover { opacity: 0.9; }
+    .tl-bar.has-blocked { background: var(--accent-red); opacity: 0.75; }
+    .tl-labels {
+      display: flex; justify-content: space-between; font-family: var(--font-mono);
+      font-size: 0.5rem; color: var(--text-dim);
+    }
+
+    /* tablas */
+    table.sen-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.74rem; }
+    table.sen-table thead th {
+      text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-mid);
+      font-size: 0.58rem; letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-muted);
+    }
+    table.sen-table tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+    table.sen-table tbody tr:hover { background: var(--bg-elevated); }
+    .tag {
+      display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 0.58rem;
+      letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600;
+    }
+    .tag.ok { background: rgba(0,168,120,0.12); color: var(--accent-green2); }
+    .tag.blocked { background: rgba(216,3,0,0.10); color: var(--accent-red); }
+    .tag.pending { background: rgba(200,122,0,0.12); color: var(--accent-amber); }
+    .tag.sensitive { background: rgba(0,152,199,0.12); color: var(--accent-cyan); }
+
+    .btn-mini {
+      font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 5px 10px; border: 1px solid var(--border-mid); background: var(--bg-card);
+      color: var(--text-secondary); cursor: pointer; transition: background 0.15s, color 0.15s; border-radius: 3px;
+    }
+    .btn-mini:hover { background: var(--text-primary); color: #fff; }
+    .btn-mini.danger { border-color: rgba(216,3,0,0.4); color: var(--accent-red); }
+    .btn-mini.danger:hover { background: var(--accent-red); color: #fff; }
+    .btn-mini.ok { border-color: rgba(0,168,120,0.4); color: var(--accent-green2); }
+    .btn-mini.ok:hover { background: var(--accent-green); color: #fff; }
+
+    .filters-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .filters-row input, .filters-row select {
+      background: var(--bg-elevated); border: 1px solid var(--border-mid); color: var(--text-primary);
+      font-family: var(--font-mono); font-size: 0.72rem; padding: 7px 10px; outline: none;
+    }
+
+    .chain-status {
+      display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 0.74rem;
+    }
+    .chain-dot { width: 9px; height: 9px; border-radius: 50%; }
+    .chain-dot.valid { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+    .chain-dot.broken { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+
+    .manual-block-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+    .back-link {
+      display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 0.62rem;
+      letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; margin-bottom: 22px;
+    }
+    .back-link:hover { color: var(--text-primary); }
+    .back-link::before { content: '←'; font-size: 0.9rem; }
+
+    .empty-row { text-align: center; color: var(--text-dim); padding: 20px; font-family: var(--font-mono); font-size: 0.72rem; }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand">
+      <img src="/assets/logo-snfi.png" alt="S-NFI" style="height:22px;width:auto;vertical-align:middle;margin-right:8px;">
+      Elvi-Ra
+    </div>
+    <div class="row" style="gap:18px;">
+      <span class="mono" id="userTag">...</span>
+      <button class="btn ghost" id="logoutBtn">Cerrar sesion</button>
+    </div>
+  </nav>
+
+  <main class="container">
+    <a class="back-link" href="/pages/dashboard.html">Dashboard</a>
+
+    <div class="sen-hero reveal">
+      <div class="sen-badge">
+        <div class="sen-badge__dot"></div>
+        <span>Mesa · Seguridad &amp; Telemetria</span>
+        <span style="opacity:.4;">|</span>
+        <span>Solo Admin</span>
+      </div>
+      <h1 class="sen-hero__title">SENTINEL · <em>Trazabilidad Forense</em></h1>
+      <p class="sen-hero__sub">Observabilidad total del trafico interno. Log criptografico inmutable (hash chain + HMAC) por cada peticion. Rate limiting dinamico en rutas sensibles (CNMC, S-NFI U-2). Bloqueo manual y cola de revision de IPs.</p>
+    </div>
+
+    <div id="errorBox" style="display:none;" class="mole-error"></div>
+
+    <!-- KPIs -->
+    <div class="kpi-grid reveal" id="kpiGrid">
+      <div class="kpi-cell">
+        <div class="kpi-label">Peticiones · 60min</div>
+        <div class="kpi-val loading" id="kpiTotal60">...</div>
+        <div class="kpi-unit">trafico total registrado</div>
+      </div>
+      <div class="kpi-cell alert">
+        <div class="kpi-label">Bloqueadas · 60min</div>
+        <div class="kpi-val danger" id="kpiBlocked60">...</div>
+        <div class="kpi-unit">rechazadas por Sentinel</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Rutas sensibles · 60min</div>
+        <div class="kpi-val" id="kpiSensitive60">...</div>
+        <div class="kpi-unit">CNMC + S-NFI U-2</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">IPs en cola revision</div>
+        <div class="kpi-val" id="kpiQueue">...</div>
+        <div class="kpi-unit">pendientes decision Admin</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-label">Cadena forense</div>
+        <div class="kpi-val" id="kpiChain" style="font-size:0.95rem;">verificando...</div>
+        <div class="kpi-unit" id="kpiChainSub">hash chain + HMAC</div>
+      </div>
+    </div>
+
+    <!-- TRAFICO -->
+    <div class="panel-section reveal">
+      <div class="panel-header">
+        <span class="panel-title">Trafico · peticiones por minuto · ultimos 60 min</span>
+        <span class="panel-badge" id="tlUpdatedAt">—</span>
+      </div>
+      <div class="panel-body">
+        <div class="tl-track" id="tlTrack"></div>
+        <div class="tl-labels" id="tlLabels"></div>
+        <div style="display:flex;gap:18px;margin-top:14px;font-family:var(--font-mono);font-size:0.58rem;color:var(--text-muted);">
+          <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-green);display:inline-block;border-radius:2px;opacity:.6;"></span>normal</span>
+          <span style="display:flex;align-items:center;gap:6px;"><span style="width:10px;height:10px;background:var(--accent-red);display:inline-block;border-radius:2px;opacity:.75;"></span>con bloqueos</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- BLOQUEO MANUAL -->
+    <div class="panel-section reveal">
+      <div class="panel-header">
+        <span class="panel-title">Bloqueo manual de IP</span>
+      </div>
+      <div class="panel-body">
+        <div class="manual-block-row">
+          <input type="text" id="manualBlockIp" placeholder="IP a bloquear (ej. 203.0.113.4)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
+          <input type="text" id="manualBlockReason" placeholder="Motivo (opcional)" style="flex:1;min-width:200px;background:var(--bg-elevated);border:1px solid var(--border-mid);color:var(--text-primary);font-family:var(--font-mono);font-size:0.78rem;padding:9px 12px;outline:none;">
+          <button class="btn-mini danger" id="manualBlockBtn" style="padding:9px 16px;">Bloquear ahora</button>
+        </div>
+        <div id="manualBlockMsg" style="display:none;margin-top:10px;font-family:var(--font-mono);font-size:0.68rem;"></div>
+      </div>
+    </div>
+
+    <!-- COLA DE REVISION -->
+    <div class="panel-section reveal">
+      <div class="panel-header">
+        <span class="panel-title">Cola de revision Admin</span>
+        <span class="panel-badge" id="queueCount">—</span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <table class="sen-table">
+          <thead>
+            <tr>
+              <th>IP</th><th>Geo</th><th>Estado</th><th>Motivo</th><th>Actualizado</th><th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="queueBody"></tbody>
+        </table>
+        <div id="queueEmpty" class="empty-row" style="display:none;">Sin IPs en cola.</div>
+      </div>
+    </div>
+
+    <!-- TOP IPs -->
+    <div class="panel-section reveal">
+      <div class="panel-header">
+        <span class="panel-title">Top IPs por volumen</span>
+      </div>
+      <div class="panel-body" style="padding:0;">
+        <table class="sen-table">
+          <thead>
+            <tr><th>IP</th><th>Geo</th><th>Total peticiones</th><th>Bloqueadas</th><th>Ultima actividad</th><th>Acciones</th></tr>
+          </thead>
+          <tbody id="ipStatsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- LOG FORENSE -->
+    <div class="panel-section reveal">
+      <div class="panel-header">
+        <span class="panel-title">Log forense · cadena de hashes</span>
+        <div class="chain-status">
+          <div class="chain-dot" id="chainDot"></div>
+          <span id="chainText">verificando...</span>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="filters-row" style="margin-bottom:14px;">
+          <input type="text" id="filterIp" placeholder="Filtrar por IP">
+          <select id="filterBlocked">
+            <option value="">Todos</option>
+            <option value="true">Solo bloqueados</option>
+            <option value="false">Solo permitidos</option>
+          </select>
+          <select id="filterSensitive">
+            <option value="">Todas las rutas</option>
+            <option value="true">Solo rutas sensibles</option>
+          </select>
+          <button class="btn-mini" id="filterApply">Filtrar</button>
+        </div>
+        <table class="sen-table">
+          <thead>
+            <tr><th>Seq</th><th>Hora</th><th>IP</th><th>Metodo</th><th>Ruta</th><th>Mesa</th><th>Status</th><th>Estado</th></tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+        <div id="logEmpty" class="empty-row" style="display:none;">Sin eventos registrados.</div>
+      </div>
+    </div>
+
+    <div class="mole-nota reveal">
+      <strong>Politica de bloqueo:</strong> exceso de tasa en ruta sensible no provoca ban inmediato. La IP entra en cola de revision Admin, salvo patron de ataque evidente (3 excesos en 1h misma ruta, o 2 excesos en rutas sensibles distintas), donde el auto-bloqueo es inmediato.<br>
+      <strong>Doctrina:</strong> el ser humano autoriza, el ser humano supervisa, el sistema ejecuta. Todo bloqueo manual queda firmado con el usuario Admin que lo ejecuto.
+    </div>
+  </main>
+
+  <script type="module">
+    import { api, getUser, getToken, clearSession, requireAuth, toast } from '/js/api.js';
+    requireAuth();
+    document.getElementById('userTag').textContent = getUser() || '';
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      try { await api.logout(); } catch {}
+      clearSession();
+      location.href = '/pages/login.html';
+    });
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg;
+      box.style.display = 'flex';
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function fmtTime(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function geoLabel(geo) {
+      if (!geo) return '—';
+      return [geo.city, geo.country].filter(Boolean).join(', ') || '—';
+    }
+
+    /* ---- Timeline ---- */
+    async function loadTimeline() {
+      try {
+        const { timeline } = await api.sentinelTimeline(60);
+        const track = document.getElementById('tlTrack');
+        const labels = document.getElementById('tlLabels');
+        track.innerHTML = '';
+        labels.innerHTML = '';
+        if (!timeline.length) {
+          track.innerHTML = '<div class="empty-row" style="flex:1;">Sin trafico registrado en los ultimos 60 min.</div>';
+        } else {
+          const max = Math.max(...timeline.map(b => b.total), 1);
+          timeline.forEach(b => {
+            const bar = document.createElement('div');
+            bar.className = 'tl-bar' + (b.blocked > 0 ? ' has-blocked' : '');
+            bar.style.height = `${Math.max((b.total / max) * 100, 3)}%`;
+            bar.title = `${fmtTime(b.minute)} · ${b.total} peticiones · ${b.blocked} bloqueadas · ${b.sensitive} sensibles`;
+            track.appendChild(bar);
+          });
+          labels.innerHTML = `<span>${fmtTime(timeline[0].minute)}</span><span>${fmtTime(timeline[timeline.length - 1].minute)}</span>`;
+        }
+        const total60 = timeline.reduce((a, b) => a + b.total, 0);
+        const blocked60 = timeline.reduce((a, b) => a + b.blocked, 0);
+        const sensitive60 = timeline.reduce((a, b) => a + b.sensitive, 0);
+        document.getElementById('kpiTotal60').textContent = total60;
+        document.getElementById('kpiBlocked60').textContent = blocked60;
+        document.getElementById('kpiSensitive60').textContent = sensitive60;
+        document.getElementById('tlUpdatedAt').textContent = `actualizado ${fmtTime(new Date())}`;
+      } catch (ex) {
+        showError('Error cargando timeline: ' + (ex.message || ex));
+      }
+    }
+
+    /* ---- Verify chain ---- */
+    async function loadChain() {
+      try {
+        const result = await api.sentinelVerifyChain();
+        const dot = document.getElementById('chainDot');
+        const text = document.getElementById('chainText');
+        const kpi = document.getElementById('kpiChain');
+        const kpiSub = document.getElementById('kpiChainSub');
+        if (result.valid) {
+          dot.className = 'chain-dot valid';
+          text.textContent = `Integra · ${result.totalEntries} entradas`;
+          kpi.textContent = 'INTEGRA';
+          kpi.className = 'kpi-val ok';
+          kpiSub.textContent = `${result.totalEntries} entradas verificadas`;
+        } else {
+          dot.className = 'chain-dot broken';
+          text.textContent = `ROTA en seq ${result.brokenAtSeq} (${result.reason})`;
+          kpi.textContent = 'ROTA';
+          kpi.className = 'kpi-val danger';
+          kpiSub.textContent = `fallo en seq ${result.brokenAtSeq}`;
+        }
+      } catch (ex) {
+        showError('Error verificando cadena: ' + (ex.message || ex));
+      }
+    }
+
+    /* ---- Review queue ---- */
+    async function loadQueue() {
+      try {
+        const queue = await api.sentinelReviewQueue();
+        const body = document.getElementById('queueBody');
+        const empty = document.getElementById('queueEmpty');
+        const pending = queue.filter(q => q.decision === 'PENDING').length;
+        document.getElementById('kpiQueue').textContent = pending;
+        document.getElementById('queueCount').textContent = `${queue.length} IPs registradas`;
+        if (!queue.length) {
+          body.innerHTML = '';
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+        body.innerHTML = queue.map(q => `
+          <tr>
+            <td class="mono">${escapeHtml(q.ip)}</td>
+            <td>${escapeHtml(geoLabel(q.geo))}</td>
+            <td><span class="tag ${q.decision === 'BLOCKED' ? 'blocked' : q.decision === 'ALLOWED' ? 'ok' : 'pending'}">${escapeHtml(q.decision)}</span>${q.autoBlocked ? ' <span class="tag blocked">AUTO</span>' : ''}</td>
+            <td>${escapeHtml(q.reason || '—')}</td>
+            <td class="mono">${fmtTime(q.updatedAt)}</td>
+            <td>
+              <button class="btn-mini ok" data-decide="ALLOWED" data-ip="${escapeHtml(q.ip)}">Conceder</button>
+              <button class="btn-mini danger" data-decide="BLOCKED" data-ip="${escapeHtml(q.ip)}">Bloquear</button>
+              <button class="btn-mini" data-report="${escapeHtml(q.ip)}">Informe</button>
+            </td>
+          </tr>
+        `).join('');
+        body.querySelectorAll('[data-decide]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              await api.sentinelDecide(btn.dataset.ip, btn.dataset.decide);
+              toast(`IP ${btn.dataset.ip} → ${btn.dataset.decide}`);
+              loadQueue();
+            } catch (ex) { toast(ex.message || 'Error'); }
+          });
+        });
+        body.querySelectorAll('[data-report]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              const report = await api.sentinelIpReport(btn.dataset.report);
+              const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = `sentinel-informe-${btn.dataset.report}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (ex) { toast(ex.message || 'Error'); }
+          });
+        });
+      } catch (ex) {
+        showError('Error cargando cola de revision: ' + (ex.message || ex));
+      }
+    }
+
+    /* ---- Top IPs ---- */
+    async function loadIpStats() {
+      try {
+        const stats = await api.sentinelIpStats();
+        const body = document.getElementById('ipStatsBody');
+        if (!stats.length) {
+          body.innerHTML = '<tr><td colspan="6" class="empty-row">Sin datos.</td></tr>';
+          return;
+        }
+        body.innerHTML = stats.map(s => `
+          <tr>
+            <td class="mono">${escapeHtml(s.ip)}</td>
+            <td>${escapeHtml(geoLabel(s.geo))}</td>
+            <td class="mono">${s.total}</td>
+            <td class="mono">${s.blocked > 0 ? `<span class="tag blocked">${s.blocked}</span>` : '0'}</td>
+            <td class="mono">${fmtTime(s.lastSeen)}</td>
+            <td><button class="btn-mini danger" data-quickblock="${escapeHtml(s.ip)}">Bloquear</button></td>
+          </tr>
+        `).join('');
+        body.querySelectorAll('[data-quickblock]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.getElementById('manualBlockIp').value = btn.dataset.quickblock;
+            document.getElementById('manualBlockIp').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        });
+      } catch (ex) {
+        showError('Error cargando top IPs: ' + (ex.message || ex));
+      }
+    }
+
+    /* ---- Forensic log ---- */
+    async function loadLog(filters = {}) {
+      try {
+        const { events } = await api.sentinelLog(filters);
+        const body = document.getElementById('logBody');
+        const empty = document.getElementById('logEmpty');
+        if (!events.length) {
+          body.innerHTML = '';
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+        body.innerHTML = events.map(e => `
+          <tr>
+            <td class="mono">${e.seq}</td>
+            <td class="mono">${fmtTime(e.ts)}</td>
+            <td class="mono">${escapeHtml(e.ip)}</td>
+            <td class="mono">${escapeHtml(e.method)}</td>
+            <td class="mono">${escapeHtml(e.path)}</td>
+            <td>${escapeHtml(e.mesa || '—')}</td>
+            <td class="mono">${e.statusCode ?? '—'}</td>
+            <td>
+              ${e.blocked ? '<span class="tag blocked">BLOQUEADO</span>' : '<span class="tag ok">OK</span>'}
+              ${e.sensitive ? '<span class="tag sensitive">SENSIBLE</span>' : ''}
+            </td>
+          </tr>
+        `).join('');
+      } catch (ex) {
+        showError('Error cargando log forense: ' + (ex.message || ex));
+      }
+    }
+
+    document.getElementById('filterApply').addEventListener('click', () => {
+      const ip = document.getElementById('filterIp').value.trim();
+      const blocked = document.getElementById('filterBlocked').value;
+      const sensitive = document.getElementById('filterSensitive').value;
+      const filters = {};
+      if (ip) filters.ip = ip;
+      if (blocked) filters.blocked = blocked;
+      if (sensitive) filters.sensitive = sensitive;
+      loadLog(filters);
+    });
+
+    /* ---- Manual block ---- */
+    document.getElementById('manualBlockBtn').addEventListener('click', async () => {
+      const ip = document.getElementById('manualBlockIp').value.trim();
+      const reason = document.getElementById('manualBlockReason').value.trim();
+      const msg = document.getElementById('manualBlockMsg');
+      if (!ip) {
+        msg.textContent = 'Introduce una IP valida.';
+        msg.style.color = 'var(--accent-red)';
+        msg.style.display = 'block';
+        return;
+      }
+      try {
+        await api.sentinelBlockIp(ip, reason);
+        msg.textContent = `IP ${ip} bloqueada.`;
+        msg.style.color = 'var(--accent-green2)';
+        msg.style.display = 'block';
+        document.getElementById('manualBlockIp').value = '';
+        document.getElementById('manualBlockReason').value = '';
+        loadQueue();
+      } catch (ex) {
+        msg.textContent = ex.message || 'Error al bloquear.';
+        msg.style.color = 'var(--accent-red)';
+        msg.style.display = 'block';
+      }
+    });
+
+    /* ---- init + polling ---- */
+    async function refreshAll() {
+      await Promise.all([loadTimeline(), loadChain(), loadQueue(), loadIpStats(), loadLog()]);
+    }
+    refreshAll();
+    setInterval(() => { loadTimeline(); loadQueue(); loadIpStats(); }, 30000);
+  </script>
+</body>
+</html>

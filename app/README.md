@@ -26,12 +26,10 @@ npm start
 
 Abre http://localhost:5173 → redirige a `/pages/login.html`.
 
-## Credenciales (de `Creedenciales.txt`)
+## Credenciales
 
-| Usuario      | Contraseña  |
-|--------------|-------------|
-| Marc Blanes  | Marc2005    |
-| Nour         | Nour 2026   |
+Seed inicial via variables de entorno `SEED_MARC_PASSWORD`, `SEED_NOUR_PASSWORD`, etc.
+Ver `app/backend/.env.example`. Tras primer arranque, hashes viven en `data/users.json`.
 
 ## Notas
 

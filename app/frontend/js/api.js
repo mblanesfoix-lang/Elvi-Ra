@@ -37,10 +37,20 @@ async function req(method, url, body) {
   return data;
 }
 
-export const api = {
-  login:  (username, password) => req('POST', '/api/login', { username, password }),
-  logout: () => req('POST', '/api/logout'),
-  me:     () => req('GET',  '/api/me'),
+export function api(url, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  let body;
+  if (opts.body !== undefined) {
+    body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+  }
+  return req(method, url, body);
+}
+
+Object.assign(api, {
+  login:          (username, password) => req('POST', '/api/login', { username, password }),
+  logout:         () => req('POST', '/api/logout'),
+  me:             () => req('GET',  '/api/me'),
+  changePassword: (currentPassword, newPassword) => req('POST', '/api/change-password', { currentPassword, newPassword }),
 
   listSheets:    () => req('GET',    '/api/sheets'),
   createSheet:   (name) => req('POST', '/api/sheets', { name }),
@@ -83,7 +93,17 @@ export const api = {
   cnmcIngest:        (doc) => req('POST', '/api/elvira/cnmc/ingest', doc),
   cnmcDocuments:     () => req('GET',  '/api/elvira/cnmc/documents'),
   cnmcAudit:         (companyId, docId) => req('POST', `/api/elvira/cnmc/audit/${companyId}`, docId ? { docId } : {}),
-};
+
+  // Sentinel · trazabilidad forense IP
+  sentinelLog:       (params = {}) => req('GET', `/api/sentinel/forensic-log?${new URLSearchParams(params).toString()}`),
+  sentinelVerifyChain: () => req('GET', '/api/sentinel/verify-chain'),
+  sentinelIpStats:   () => req('GET', '/api/sentinel/ip-stats'),
+  sentinelReviewQueue: () => req('GET', '/api/sentinel/review-queue'),
+  sentinelDecide:    (ip, decision) => req('POST', `/api/sentinel/review-queue/${encodeURIComponent(ip)}/decide`, { decision }),
+  sentinelIpReport:  (ip) => req('GET', `/api/sentinel/review-queue/${encodeURIComponent(ip)}/report`),
+  sentinelTimeline:  (minutes = 60) => req('GET', `/api/sentinel/traffic-timeline?minutes=${minutes}`),
+  sentinelBlockIp:   (ip, reason) => req('POST', '/api/sentinel/block-ip', { ip, reason }),
+});
 
 export function toast(msg) {
   let el = document.querySelector('.toast');

@@ -14,10 +14,59 @@
   <nav class="nav">
     <div class="brand"><img src="/assets/logo-snfi.png" alt="S-NFI" style="height:22px;width:auto;vertical-align:middle;margin-right:8px;"> Elvi-Ra</div>
     <div class="row" style="gap:18px;">
-      <span class="mono" id="userTag">…</span>
-      <button class="btn ghost" id="logoutBtn">Cerrar sesión</button>
+      <div class="user-menu" id="userMenu">
+        <button class="user-menu__trigger mono" id="userTag" aria-haspopup="true" aria-expanded="false">…</button>
+        <div class="user-menu__dropdown" id="userDropdown" hidden>
+          <div class="user-menu__section">
+            <span class="user-menu__label">Cambiar contraseña</span>
+            <input class="user-menu__input" type="password" id="pwdCurrent" placeholder="Contraseña actual" autocomplete="current-password">
+            <input class="user-menu__input" type="password" id="pwdNew" placeholder="Nueva contraseña" autocomplete="new-password">
+            <input class="user-menu__input" type="password" id="pwdConfirm" placeholder="Confirmar nueva" autocomplete="new-password">
+            <p class="user-menu__error" id="pwdError" hidden></p>
+            <button class="btn sage" id="pwdSubmit" style="width:100%;margin-top:4px;">Actualizar</button>
+          </div>
+          <div class="user-menu__divider"></div>
+          <button class="user-menu__item user-menu__item--danger" id="logoutBtn">Cerrar sesión</button>
+        </div>
+      </div>
     </div>
   </nav>
+
+  <style>
+    .user-menu { position: relative; }
+    .user-menu__trigger {
+      background: none; border: none; cursor: pointer;
+      padding: 6px 10px; border-radius: 6px;
+      font-size: 0.82rem; color: var(--text-2);
+      transition: background 0.15s;
+    }
+    .user-menu__trigger:hover { background: rgba(20,24,32,0.06); color: var(--text-1); }
+    .user-menu__dropdown {
+      position: absolute; right: 0; top: calc(100% + 8px);
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+      min-width: 240px; padding: 12px 0; z-index: 100;
+    }
+    .user-menu__section { padding: 4px 14px 8px; display: flex; flex-direction: column; gap: 6px; }
+    .user-menu__label { font-size: 0.72rem; font-family: var(--font-mono); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+    .user-menu__input {
+      width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 0.82rem; font-family: var(--font-sans);
+      background: var(--bg); color: var(--text-1); outline: none; box-sizing: border-box;
+    }
+    .user-menu__input:focus { border-color: var(--accent-green); }
+    .user-menu__error { font-size: 0.78rem; color: #c0392b; margin: 2px 0 0; }
+    .user-menu__divider { height: 1px; background: var(--border); margin: 4px 0; }
+    .user-menu__item {
+      display: block; width: 100%; text-align: left;
+      padding: 9px 14px; background: none; border: none; cursor: pointer;
+      font-size: 0.85rem; font-family: var(--font-sans); color: var(--text-1);
+      transition: background 0.12s;
+    }
+    .user-menu__item:hover { background: rgba(20,24,32,0.04); }
+    .user-menu__item--danger { color: #c0392b; }
+    .user-menu__item--danger:hover { background: rgba(192,57,43,0.06); }
+  </style>
 
   <main class="container">
     <header class="reveal">
@@ -29,103 +78,40 @@
     </header>
 
     <section class="tiles">
-      <div class="tile reveal delay-1" style="opacity:.55; cursor:not-allowed;">
+      <a class="tile reveal delay-1" href="/pages/elvi-ra.html" data-mesa="elvira" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
         <div class="emoji">◆</div>
         <h3>ELVI-RA</h3>
-        <p>Centro de mando. Orquesta sistemas, OPHS y bridges con Sentinel + Herzog.</p>
-        <p class="mono" style="margin-top:10px;">próximamente</p>
-      </div>
+        <p>Centro de mando. Sistemas, OPHS, T'Controler, Sentinel + Herzog bridges. Solo Admin.</p>
+        <p class="mono" style="margin-top:10px;">acceso directo →</p>
+      </a>
 
-      <a class="tile reveal delay-2" href="/pages/reff.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+      <a class="tile reveal delay-2" href="/pages/reff.html" data-mesa="reff" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
         <div class="emoji">◈</div>
         <h3>Rëff</h3>
         <p>CRM de inteligencia comercial S-NFI. Deep Research, scoring OPHS, auditoría Herzog, LI Contacts, Finder y Email Creator.</p>
         <p class="mono" style="margin-top:10px;">acceso directo →</p>
       </a>
 
-      <a class="tile reveal delay-3" href="/pages/observer.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
-        <div class="emoji">◉</div>
-        <h3>Observer</h3>
-        <p>Consola de Telemetría. Bus de eventos en tiempo real. Flujo de paquetes entre Elvi-Ra, Rëff, OPHS, Sentinel y Herzog.</p>
-        <p class="mono" style="margin-top:10px;">acceso directo →</p>
-      </a>
-
-      <a class="tile reveal delay-4" href="/pages/cnmc-mole.html" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+      <a class="tile reveal delay-4" href="/pages/snfi-u2.html" data-mesa="snfiu2" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
         <div class="emoji">◎</div>
-        <h3>CNMC Mole</h3>
+        <h3>S-NFI U2</h3>
         <p>Energía desperdiciada en el sistema eléctrico español. Horas precio 0&nbsp;EUR/MWh, GWh curtailed, comparativa histórica 2023-2026. Dato vivo vía REE.</p>
         <p class="mono" style="margin-top:10px;">acceso directo →</p>
       </a>
-    </section>
 
-    <div class="hr"></div>
-
-    <!-- CNMC Intelligence Finder -->
-    <section class="reveal" id="cnmcSection">
-      <span class="kicker">Regulatorio · CNMC</span>
-      <div style="display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:4px;">
-        <div>
-          <h2 style="margin:0 0 4px;">CNMC Finder</h2>
-          <p style="margin:0; max-width:560px;">Busca documentos regulatorios CNMC de cualquier empresa. Rëff sintetiza sanciones, expedientes, BSS declarado y estado de compliance — listo para auditoría de asimetría.</p>
-        </div>
-        <button class="btn" id="cnmcToggle">Abrir buscador</button>
+      <div class="tile reveal delay-5" data-mesa="ophs" style="opacity:0.6; cursor:default;">
+        <div class="emoji">◇</div>
+        <h3>OPHS</h3>
+        <p>Capa de ejecución física S-NFI Systems. Recibe Dictamen de Soberanía validado por Rëff y autoriza acciones bajo Pactvm Viridi.</p>
+        <p class="mono" style="margin-top:10px;">pendiente de conexión</p>
       </div>
 
-      <div id="cnmcPanel" style="display:none; margin-top:20px;">
-        <div class="card" style="padding:20px;">
-          <div style="display:grid; grid-template-columns:1fr 160px 120px; gap:10px; align-items:end; flex-wrap:wrap;">
-            <div>
-              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">EMPRESA / NODO</label>
-              <input id="cnmcEmpresa" type="text" placeholder="ej. Iberdrola, Acciona, Naturgy..." style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
-            </div>
-            <div>
-              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">CIF (opcional)</label>
-              <input id="cnmcCif" type="text" placeholder="A12345678" style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
-            </div>
-            <div>
-              <label class="mono" style="font-size:.65rem; letter-spacing:.08em; color:var(--text-muted); display:block; margin-bottom:5px;">PERIODO</label>
-              <input id="cnmcPeriodo" type="text" placeholder="2023" style="width:100%; box-sizing:border-box; background:var(--bg2); border:1px solid var(--border); color:var(--text); padding:9px 12px; font-family:var(--font); font-size:.85rem; border-radius:6px; outline:none;">
-            </div>
-          </div>
-          <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
-            <button class="btn" id="cnmcSearchBtn" style="min-width:140px;">Buscar en CNMC</button>
-            <span id="cnmcStatus" class="mono" style="font-size:.7rem; color:var(--text-muted); align-self:center;"></span>
-          </div>
-        </div>
-
-        <!-- Result -->
-        <div id="cnmcResult" style="display:none; margin-top:16px;">
-          <div class="card" style="padding:20px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
-              <div>
-                <span id="cnmcResEmpresa" class="mono" style="font-weight:700; font-size:.9rem;"></span>
-                <span id="cnmcResPeriodo" class="mono" style="color:var(--text-muted); font-size:.75rem; margin-left:10px;"></span>
-              </div>
-              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                <span id="cnmcResConfianza" class="mono" style="font-size:.62rem; padding:2px 8px; border:1px solid; border-radius:3px;"></span>
-                <span id="cnmcResCompliance" class="mono" style="font-size:.62rem; padding:2px 8px; border:1px solid; border-radius:3px;"></span>
-              </div>
-            </div>
-
-            <div id="cnmcResGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px; margin-bottom:14px;"></div>
-
-            <div id="cnmcResFuente" class="mono" style="font-size:.62rem; color:var(--text-muted); margin-bottom:10px;"></div>
-            <div id="cnmcResNotas" style="font-size:.78rem; color:var(--text-muted); line-height:1.5; margin-bottom:14px;"></div>
-
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <button class="btn" id="cnmcIngestBtn">Ingestar documento</button>
-              <button class="btn ghost" id="cnmcAuditBtn" style="display:none;">Auditar empresa en CRM</button>
-            </div>
-            <div id="cnmcActionStatus" class="mono" style="font-size:.68rem; color:var(--text-muted); margin-top:8px;"></div>
-          </div>
-        </div>
-
-        <!-- Documentos ingestados -->
-        <div style="margin-top:16px;">
-          <span class="kicker" style="font-size:.62rem;">Documentos CNMC ingestados</span>
-          <div id="cnmcDocList" style="margin-top:8px; display:grid; gap:6px;"></div>
-        </div>
-      </div>
+      <a class="tile reveal delay-6" href="/pages/sentinel.html" data-mesa="sentinel" style="text-decoration:none; color:inherit; display:block; cursor:pointer;">
+        <div class="emoji">⛨</div>
+        <h3>Sentinel</h3>
+        <p>Seguridad y telemetría. Trazabilidad forense de IPs, hash chain inmutable, rate limiting en rutas sensibles, cola de revisión y bloqueo manual. Solo Admin.</p>
+        <p class="mono" style="margin-top:10px;">acceso directo →</p>
+      </a>
     </section>
 
     <div class="hr"></div>
@@ -150,13 +136,121 @@
         </div>
       </div>
     </section>
+
+    <div class="hr"></div>
+
+    <section class="reveal">
+      <span class="kicker">Estado de las Mesas</span>
+      <h2 style="margin-top:4px;">Health Check</h2>
+      <div class="mesa-status-grid" id="mesaStatusGrid">
+        <div class="mesa-status-card" data-mesa="elvira">
+          <div class="mesa-status-head">
+            <span class="mesa-status-name">Elvi-Ra</span>
+            <span class="mesa-status-dot checking"></span>
+          </div>
+          <span class="mesa-status-label">comprobando...</span>
+          <span class="mesa-status-detail"></span>
+          <span class="mesa-status-error"></span>
+        </div>
+        <div class="mesa-status-card" data-mesa="reff">
+          <div class="mesa-status-head">
+            <span class="mesa-status-name">Rëff</span>
+            <span class="mesa-status-dot checking"></span>
+          </div>
+          <span class="mesa-status-label">comprobando...</span>
+          <span class="mesa-status-detail"></span>
+          <span class="mesa-status-error"></span>
+        </div>
+        <div class="mesa-status-card" data-mesa="snfiu2">
+          <div class="mesa-status-head">
+            <span class="mesa-status-name">S-NFI U2</span>
+            <span class="mesa-status-dot checking"></span>
+          </div>
+          <span class="mesa-status-label">comprobando...</span>
+          <span class="mesa-status-detail"></span>
+          <span class="mesa-status-error"></span>
+        </div>
+        <div class="mesa-status-card" data-mesa="ophs">
+          <div class="mesa-status-head">
+            <span class="mesa-status-name">OPHS</span>
+            <span class="mesa-status-dot warn"></span>
+          </div>
+          <span class="mesa-status-label warn">pendiente de conexión</span>
+          <span class="mesa-status-detail">puerto reservado · sin endpoint asignado</span>
+          <span class="mesa-status-error"></span>
+        </div>
+        <div class="mesa-status-card" data-mesa="sentinel">
+          <div class="mesa-status-head">
+            <span class="mesa-status-name">Sentinel</span>
+            <span class="mesa-status-dot checking"></span>
+          </div>
+          <span class="mesa-status-label">comprobando...</span>
+          <span class="mesa-status-detail"></span>
+          <span class="mesa-status-error"></span>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script type="module">
-    import { api, getUser, getToken, clearSession, requireAuth } from '/js/api.js';
+    import { api, getUser, getToken, clearSession, requireAuth, toast } from '/js/api.js';
     requireAuth();
     const user = getUser() || '';
     document.getElementById('userTag').textContent = user;
+
+    // Apply mesa permissions — hide tiles + health cards not accessible
+    try {
+      const perms = await fetch('/api/me/permissions', {
+        headers: { Authorization: `Bearer ${getToken()}` }
+      }).then(r => r.json());
+      const allowed = new Set(perms.mesas || []);
+      // Tiles
+      document.querySelectorAll('.tile[data-mesa]').forEach(el => {
+        if (!allowed.has(el.dataset.mesa)) el.style.display = 'none';
+      });
+      // Health check cards
+      document.querySelectorAll('.mesa-status-card[data-mesa]').forEach(el => {
+        if (!allowed.has(el.dataset.mesa)) el.style.display = 'none';
+      });
+    } catch {}
+
+    // User menu dropdown
+    const trigger = document.getElementById('userTag');
+    const dropdown = document.getElementById('userDropdown');
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !dropdown.hidden;
+      dropdown.hidden = open;
+      trigger.setAttribute('aria-expanded', String(!open));
+    });
+    document.addEventListener('click', (e) => {
+      if (!document.getElementById('userMenu').contains(e.target)) {
+        dropdown.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    // Change password
+    document.getElementById('pwdSubmit').addEventListener('click', async () => {
+      const cur = document.getElementById('pwdCurrent').value;
+      const neu = document.getElementById('pwdNew').value;
+      const con = document.getElementById('pwdConfirm').value;
+      const errEl = document.getElementById('pwdError');
+      errEl.hidden = true;
+      if (!cur || !neu || !con) { errEl.textContent = 'Rellena todos los campos'; errEl.hidden = false; return; }
+      if (neu !== con) { errEl.textContent = 'Las contraseñas no coinciden'; errEl.hidden = false; return; }
+      try {
+        await api.changePassword(cur, neu);
+        toast('Contraseña actualizada');
+        dropdown.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+        ['pwdCurrent','pwdNew','pwdConfirm'].forEach(id => document.getElementById(id).value = '');
+      } catch (ex) {
+        errEl.textContent = ex.message || 'Error al cambiar contraseña';
+        errEl.hidden = false;
+      }
+    });
+
     document.getElementById('logoutBtn').addEventListener('click', async () => {
       try { await api.logout(); } catch {}
       clearSession();
@@ -179,9 +273,9 @@
       const totalK = ((g.totalTokens || 0) / 1000).toFixed(1);
       const cap = tc.tokensCap ? `${(tc.tokensCap / 1000).toFixed(0)}k` : '∞';
       document.getElementById('tcMain').textContent = `${totalK}k / ${cap}`;
-      const costStr = `$${g.costTotalUSD.toFixed(3)} · ${g.calls} llamadas IA`;
+      const costStr = `€${(g.costTotalEUR || 0).toFixed(3)} · ${g.calls} llamadas IA`;
       const byUserStr = (tc.byUser || [])
-        .map(u => `${u.user.split(' ')[0]}: $${u.costTotalUSD.toFixed(3)}`)
+        .map(u => `${u.user.split(' ')[0]}: €${(u.costTotalEUR || 0).toFixed(3)}`)
         .join(' · ');
       document.getElementById('tcSub').textContent = byUserStr ? `${costStr} — ${byUserStr}` : costStr;
     } catch {
@@ -189,123 +283,62 @@
       document.getElementById('tcSub').textContent = 'solo visible para Admin';
     }
 
-    /* ---- CNMC Finder ---- */
-    const cnmcToggle = document.getElementById('cnmcToggle');
-    const cnmcPanel  = document.getElementById('cnmcPanel');
-    let cnmcLastResult = null;
-
-    cnmcToggle.addEventListener('click', () => {
-      const open = cnmcPanel.style.display !== 'none';
-      cnmcPanel.style.display = open ? 'none' : 'block';
-      cnmcToggle.textContent  = open ? 'Abrir buscador' : 'Cerrar';
-      if (!open) loadCnmcDocs();
-    });
-
-    async function loadCnmcDocs() {
-      try {
-        const docs = await api.cnmcDocuments();
-        const el = document.getElementById('cnmcDocList');
-        if (!docs.length) { el.innerHTML = '<span class="mono" style="font-size:.65rem;color:var(--text-muted);">Sin documentos ingestados.</span>'; return; }
-        el.innerHTML = docs.slice(0, 20).map(d => `
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:7px 12px; background:var(--bg2); border:1px solid var(--border); border-radius:5px; flex-wrap:wrap; gap:6px;">
-            <div>
-              <span class="mono" style="font-size:.72rem; font-weight:600;">${d.empresa}</span>
-              <span class="mono" style="font-size:.62rem; color:var(--text-muted); margin-left:8px;">${d.periodo || ''}</span>
-            </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <span class="mono" style="font-size:.58rem; color:var(--accent-green2); border:1px solid rgba(0,168,120,.35); padding:1px 6px; border-radius:2px;">[CNMC]</span>
-              <span class="mono" style="font-size:.6rem; color:var(--text-muted);">${new Date(d.ingestedAt).toLocaleDateString('es-ES')}</span>
-            </div>
-          </div>`).join('');
-      } catch { /* silencioso */ }
+    // ---- Estado de las Mesas (health check) ----
+    function setMesaStatus(mesa, state, label, detail, error) {
+      const card = document.querySelector(`.mesa-status-card[data-mesa="${mesa}"]`);
+      if (!card) return;
+      const dot = card.querySelector('.mesa-status-dot');
+      const lbl = card.querySelector('.mesa-status-label');
+      const det = card.querySelector('.mesa-status-detail');
+      const err = card.querySelector('.mesa-status-error');
+      dot.className = `mesa-status-dot ${state}`;
+      lbl.className = `mesa-status-label ${state}`;
+      lbl.textContent = label;
+      det.textContent = detail || '';
+      err.textContent = error || '';
     }
 
-    document.getElementById('cnmcSearchBtn').addEventListener('click', async () => {
-      const empresa = document.getElementById('cnmcEmpresa').value.trim();
-      const cif     = document.getElementById('cnmcCif').value.trim();
-      const periodo = document.getElementById('cnmcPeriodo').value.trim();
-      if (!empresa) { document.getElementById('cnmcStatus').textContent = 'Introduce el nombre de la empresa.'; return; }
-
-      const btn = document.getElementById('cnmcSearchBtn');
-      btn.disabled = true;
-      btn.textContent = 'Buscando...';
-      document.getElementById('cnmcStatus').textContent = 'Consultando CNMC vía Rëff...';
-      document.getElementById('cnmcResult').style.display = 'none';
-
+    async function checkMesa(mesa, url, { okLabel = 'operativo', parse } = {}) {
+      const t0 = performance.now();
       try {
-        const data = await api.cnmcSearch(empresa, cif || undefined, periodo || undefined);
-        cnmcLastResult = data;
-        renderCnmcResult(data);
-        document.getElementById('cnmcStatus').textContent = `Resultado recibido · ${new Date().toLocaleTimeString('es-ES')}`;
+        const headers = {};
+        const token = getToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const r = await fetch(url, { headers });
+        const ms = Math.round(performance.now() - t0);
+        if (!r.ok) {
+          let msg = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
+          setMesaStatus(mesa, 'bad', 'error', `${url} · ${ms} ms`, msg);
+          return;
+        }
+        const data = await r.json().catch(() => ({}));
+        const extra = parse ? parse(data) : '';
+        setMesaStatus(mesa, 'ok', okLabel, `${ms} ms${extra ? ' · ' + extra : ''}`, '');
       } catch (ex) {
-        document.getElementById('cnmcStatus').textContent = `Error: ${ex.message}`;
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Buscar en CNMC';
+        const ms = Math.round(performance.now() - t0);
+        setMesaStatus(mesa, 'bad', 'sin conexión', `${url} · ${ms} ms`, ex.message || 'fallo de red');
       }
-    });
-
-    function renderCnmcResult(d) {
-      const datos = d.datos || {};
-      document.getElementById('cnmcResult').style.display = 'block';
-      document.getElementById('cnmcResEmpresa').textContent = d.empresa || '';
-      document.getElementById('cnmcResPeriodo').textContent = d.periodo || '';
-
-      const confEl = document.getElementById('cnmcResConfianza');
-      confEl.textContent = `CONFIANZA: ${d.confianza || '?'}`;
-      confEl.style.color = d.confianza === 'ALTA' ? 'var(--accent-green2)' : d.confianza === 'MEDIA' ? 'var(--accent-amber)' : 'var(--text-muted)';
-      confEl.style.borderColor = confEl.style.color;
-
-      const compEl = document.getElementById('cnmcResCompliance');
-      const comp = datos.estadoCompliance || '?';
-      compEl.textContent = comp;
-      const compColor = comp === 'APTO' ? 'var(--accent-green2)' : comp === 'OBSERVACION' ? 'var(--accent-amber)' : 'var(--amg-red)';
-      compEl.style.color = compColor;
-      compEl.style.borderColor = compColor;
-
-      const fields = [
-        ['BSS (MWh)', datos.bssMwh ?? '—'],
-        ['Resiliencia', datos.resiliencia || '—'],
-        ['Sanciones', datos.sanciones || '—'],
-        ['Expedientes', datos.expedientes || '—'],
-        ['Régimen', datos.regimen || '—'],
-        ['Potencia inst. (MW)', datos.potenciaInstalada ?? '—'],
-        ['Vol. residuo (T)', datos.volumenResiduoT ?? '—'],
-      ];
-      document.getElementById('cnmcResGrid').innerHTML = fields.map(([k, v]) => `
-        <div style="padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;">
-          <div class="mono" style="font-size:.58rem; color:var(--text-muted); letter-spacing:.07em; margin-bottom:3px;">${k}</div>
-          <div style="font-size:.8rem; font-weight:600; color:var(--text);">${v}</div>
-        </div>`).join('');
-
-      document.getElementById('cnmcResFuente').textContent = d.fuente ? `FUENTE: ${d.fuente}` : '';
-      document.getElementById('cnmcResNotas').textContent = d.notas || '';
-      document.getElementById('cnmcActionStatus').textContent = '';
     }
 
-    document.getElementById('cnmcIngestBtn').addEventListener('click', async () => {
-      if (!cnmcLastResult) return;
-      const btn = document.getElementById('cnmcIngestBtn');
-      btn.disabled = true;
-      btn.textContent = 'Ingestando...';
-      try {
-        const data = await api.cnmcIngest({
-          empresa: cnmcLastResult.empresa,
-          cif:     cnmcLastResult.cif || undefined,
-          periodo: cnmcLastResult.periodo,
-          fuente:  cnmcLastResult.fuente || 'CNMC Intelligence (Rëff)',
-          datos:   cnmcLastResult.datos || {},
-        });
-        document.getElementById('cnmcActionStatus').textContent = `Documento ingestado · ID: ${data.id}`;
-        document.getElementById('cnmcIngestBtn').textContent = 'Ingestado';
-        loadCnmcDocs();
-      } catch (ex) {
-        document.getElementById('cnmcActionStatus').textContent = `Error: ${ex.message}`;
-      } finally {
-        btn.disabled = false;
-        if (btn.textContent === 'Ingestando...') btn.textContent = 'Ingestar documento';
-      }
-    });
+    function refreshMesaStatus() {
+      checkMesa('elvira', '/api/elvira/overview', {
+        parse: d => `${d.metrics?.totalCompanies ?? 0} empresas`
+      });
+      checkMesa('reff', '/api/reff-health', {
+        parse: d => d.service ? `service: ${d.service}` : ''
+      });
+      checkMesa('snfiu2', '/api/snfi-u2/live', {
+        parse: d => d.snapshot?.precio_actual_eur_mwh != null ? `${d.snapshot.precio_actual_eur_mwh} EUR/MWh` : ''
+      });
+      checkMesa('sentinel', '/api/sentinel/ip-stats', {
+        parse: d => `${Array.isArray(d) ? d.length : 0} IPs monitorizadas`
+      });
+    }
+
+    refreshMesaStatus();
+    setInterval(refreshMesaStatus, 30000);
+
   </script>
 </body>
 </html>

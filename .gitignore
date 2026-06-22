@@ -3,4 +3,12 @@ node_modules/
 .env.*
 *.log
 app/backend/data/
+Elvi-Ra/Elvi-Ra Zone/BackEnd/Creedenciales.txt
 MEMORY.md
+nul
+tmp_*.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+dist/

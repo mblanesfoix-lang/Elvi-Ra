@@ -1,29 +1,107 @@
-import express from 'express';
+﻿import express from 'express';
 import cors from 'cors';
+import bcrypt from 'bcrypt';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { connectMongo, getElviraDb, withTransaction } from './db/mongo.js';
+import { createSentinelForensics } from './sentinel-forensics.js';
+
+// Load .env manually for environments that don't use --env-file
+{
+  const envPath = new URL('.env', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const m = line.match(/^\s*([^#=\s][^=]*?)\s*=\s*(.*?)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    }
+  }
+}
 import { callLLM, PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M, ANTHROPIC_MODEL } from './llm.js';
+
+/* ---------- USD -> EUR exchange rate (cached 1h, frankfurter.app, sin API key) ---------- */
+let exchangeRateCache = { rate: 0.92, fetchedAt: 0 };
+async function getUsdToEurRate() {
+  const ONE_HOUR = 60 * 60 * 1000;
+  if (Date.now() - exchangeRateCache.fetchedAt < ONE_HOUR) return exchangeRateCache.rate;
+  try {
+    const r = await fetch('https://api.frankfurter.app/latest?from=USD&to=EUR');
+    if (r.ok) {
+      const data = await r.json();
+      if (data.rates?.EUR) exchangeRateCache = { rate: data.rates.EUR, fetchedAt: Date.now() };
+    }
+  } catch { /* mantiene ultima tasa conocida */ }
+  return exchangeRateCache.rate;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const FRONT = path.join(ROOT, 'frontend');
 const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'search_history.json');
 const ELVIRA_FILE = path.join(DATA_DIR, 'elvira.json');
-const SESSIONS = new Map(); // token -> { user, role, exp }
+const BUS_HISTORY_FILE = path.join(DATA_DIR, 'bus_history.json');
+
+/* ---------- persistence helpers ---------- */
+function atomicWriteJson(file, data) {
+  const tempFile = `${file}.tmp`;
+  try {
+    fs.writeFileSync(tempFile, JSON.stringify(data, null, 2));
+    fs.renameSync(tempFile, file);
+  } catch (err) {
+    console.error(`[persistence] Error crítico escribiendo ${file}:`, err);
+  }
+}
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(DB_FILE))  fs.writeFileSync(DB_FILE, JSON.stringify({}, null, 2));
-if (!fs.existsSync(HISTORY_FILE)) fs.writeFileSync(HISTORY_FILE, JSON.stringify({}, null, 2));
-if (!fs.existsSync(ELVIRA_FILE)) fs.writeFileSync(ELVIRA_FILE, JSON.stringify({
+if (!fs.existsSync(DB_FILE))  atomicWriteJson(DB_FILE, {});
+if (!fs.existsSync(HISTORY_FILE)) atomicWriteJson(HISTORY_FILE, {});
+if (!fs.existsSync(BUS_HISTORY_FILE)) atomicWriteJson(BUS_HISTORY_FILE, []);
+
+/* Carga de sesiones persistentes */
+const SESSIONS = new Map();
+if (fs.existsSync(SESSIONS_FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const now = Date.now();
+    // Solo cargar sesiones que no hayan expirado
+    for (const [k, v] of Object.entries(saved)) {
+      if (v.exp > now) SESSIONS.set(k, v);
+    }
+  } catch { console.warn('[sessions] No se pudieron cargar sesiones previas'); }
+}
+function saveSessions() { atomicWriteJson(SESSIONS_FILE, Object.fromEntries(SESSIONS)); }
+
+/* ---------- MongoDB Initialization ---------- */
+await connectMongo();
+const mongo = getElviraDb();
+
+/* ---------- sheet helpers ---------- */
+async function ensureUserSheets(user) {
+  const count = await mongo.collection('sheets').countDocuments({ user });
+  if (count === 0) {
+    await mongo.collection('sheets').insertOne({
+      _id: crypto.randomUUID(),
+      user,
+      name: 'Hoja principal',
+      createdAt: new Date().toISOString(),
+    });
+  }
+}
+
+if (!fs.existsSync(ELVIRA_FILE)) atomicWriteJson(ELVIRA_FILE, {
   systems: {
-    sentinel: { status: 'disconnected', endpoint: '', lastPing: null, latencyMs: null },
-    herzog:   { status: 'disconnected', endpoint: '', lastPing: null, latencyMs: null },
-    tcontroler: { status: 'local', tokensUsed: 0, tokensCap: 0 },
-    dataBase: { status: 'ok', backend: 'json' },
+    sentinel: { status: 'connected', endpoint: 'local · bus events', lastPing: null, latencyMs: null },
+    herzog:   { status: 'connected', endpoint: 'local · reff/api/herzog', lastPing: null, latencyMs: null },
+    ophs:     { status: 'pending', endpoint: '', lastPing: null, latencyMs: null },
+    tcontroler: { status: 'local', tokensUsed: 0, tokensCap: 0, byUser: {} },
+    dataBase: { status: 'ok', backend: 'mongodb' },
   },
   ophs: {
     weights: { W: 0.18, I: 0.10, S: 0.10, M: 0.12, E: 0.10, R: 0.10, B: 0.12, G: 0.13, U2: 0.05 },
@@ -39,7 +117,7 @@ if (!fs.existsSync(ELVIRA_FILE)) fs.writeFileSync(ELVIRA_FILE, JSON.stringify({
     auditLog:  [],
   },
   updatedAt: new Date().toISOString(),
-}, null, 2));
+});
 
 /* ---------- .env loader (no dep) ---------- */
 (function loadEnv() {
@@ -55,52 +133,135 @@ if (!fs.existsSync(ELVIRA_FILE)) fs.writeFileSync(ELVIRA_FILE, JSON.stringify({
 
 // LLM provider configured in llm.js via LLM_PROVIDER env var
 
-// Credentials per spec (Creedenciales.txt)
-const USERS = {
-  'Marc Blanes': { password: 'Marc2005', role: 'admin' },
-  'Nour':        { password: 'Nour 2026', role: 'admin' },
+// Credenciales: hashes persistidos en data/users.json (gitignored).
+// Seed inicial solo si el archivo no existe, desde variables de entorno SEED_*_PASSWORD.
+const SEED_USERS = {
+  'mblanes@snficorp.com': { password: process.env.SEED_MARC_PASSWORD, role: 'admin' },
+  'nour@snficorp.com':    { password: process.env.SEED_NOUR_PASSWORD, role: 'admin' },
+  'ray@snficorp.com':     { password: process.env.SEED_RAY_PASSWORD,  role: 'ray'   },
+  'ventures@snficorp.com':{ password: process.env.SEED_AMIR_PASSWORD, role: 'amir' },
 };
+
+function loadUsers() {
+  if (fs.existsSync(USERS_FILE)) {
+    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  }
+  const users = {};
+  for (const [name, { password, role }] of Object.entries(SEED_USERS)) {
+    if (!password) continue;
+    users[name] = { passwordHash: bcrypt.hashSync(password, 12), role };
+  }
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  return users;
+}
+function saveUsers(users) {
+  atomicWriteJson(USERS_FILE, users);
+}
+const USERS = loadUsers();
+
+// Mesas accesibles por rol. 'admin' = todo. Others = whitelist.
+const ROLE_MESAS = {
+  admin: ['elvira', 'reff', 'snfiu2', 'ophs', 'sentinel'],
+  ray:   ['snfiu2'],
+  amir:  ['reff'],
+};
+
+// Prefijos de rutas API por mesa (para protección en backend)
+const MESA_ROUTES = {
+  elvira:   ['/api/elvira/'],
+  reff:     ['/api/reff', '/api/sheets', '/api/companies', '/api/search', '/api/linkedin', '/api/email', '/api/overview'],
+  snfiu2:   ['/api/snfi-u2/', '/api/u2/'],
+  sentinel: ['/api/sentinel'],
+};
+
+function canAccessMesa(role, mesa) {
+  if (role === 'admin') return true;
+  return (ROLE_MESAS[role] || []).includes(mesa);
+}
+
+function mesaForPath(path) {
+  for (const [mesa, prefixes] of Object.entries(MESA_ROUTES)) {
+    if (prefixes.some(p => path.startsWith(p))) return mesa;
+  }
+  return null;
+}
+
+function requireMesa(mesa) {
+  return (req, res, next) => {
+    if (!canAccessMesa(req.role, mesa)) {
+      return res.status(403).json({ error: 'Acceso denegado a esta mesa' });
+    }
+    next();
+  };
+}
 
 /* ---- Event Bus ring-buffer (declared early so login/logout hooks can use busEmit) ---- */
 const MAX_BUS_EVENTS = 500;
+const MAX_BUS_HISTORY = 20000;
 const busEvents = [];
 const sseClients = new Set();
 
+/* Historial persistente del bus — consultable vía /api/bus/history */
+function appendBusHistory(event) {
+  let history = [];
+  try { history = JSON.parse(fs.readFileSync(BUS_HISTORY_FILE, 'utf8')); }
+  catch { history = []; }
+  if (!Array.isArray(history)) history = [];
+  history.push(event);
+  if (history.length > MAX_BUS_HISTORY) history = history.slice(history.length - MAX_BUS_HISTORY);
+  atomicWriteJson(BUS_HISTORY_FILE, history);
+}
 function busEmit(event) {
   busEvents.unshift(event);
   if (busEvents.length > MAX_BUS_EVENTS) busEvents.length = MAX_BUS_EVENTS;
+  // Historial persistente solo para movimientos reales: state_update es refresh
+  // de un evento ya guardado (no acción nueva), no se duplica en disco.
+  if (event._type !== 'state_update') appendBusHistory(event);
   const payload = `data: ${JSON.stringify(event)}\n\n`;
   for (const client of sseClients) {
     try { client.write(payload); } catch { sseClients.delete(client); }
   }
 }
 
+/* Emite un fallo al bus para que el panel Elvi-Ra lo muestre en rojo */
+function busEmitAlert({ origin = 'SYSTEM', dest = 'ELVI-RA', label, detail, user }) {
+  busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin, dest, type: 'alert', state: 'BLOCKED',
+    label, payload: { error: detail }, user,
+  });
+}
+
 const app = express();
-app.use(cors());
+app.set('trust proxy', 1);
+
+const CORS_ORIGIN = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+  : null;
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? (CORS_ORIGIN || false) : true,
+  credentials: true,
+}));
 app.use(express.json({ limit: '2mb' }));
 
-/* ---------- storage ---------- */
-function readDB() {
-  try { return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
-  catch { return {}; }
-}
-function writeDB(db) { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : 'anon',
+  message: { error: 'Demasiadas peticiones. Intenta de nuevo en un minuto.' },
+});
+app.use('/api', apiLimiter);
 
-function ensureUser(db, user) {
-  if (!db[user]) db[user] = { sheets: [] };
-  if (!db[user].sheets.length) {
-    db[user].sheets.push({
-      id: crypto.randomUUID(),
-      name: 'Hoja principal',
-      createdAt: new Date().toISOString(),
-      companies: [],
-    });
-  }
-  return db[user];
-}
-function findSheet(userBlob, sheetId) {
-  return userBlob.sheets.find(s => s.id === sheetId);
-}
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ? ipKeyGenerator(req.ip) : 'anon',
+  message: { error: 'Demasiados intentos de login. Espera 15 minutos.' },
+});
 
 function normalizeTareas(input) {
   if (!Array.isArray(input)) return [];
@@ -126,6 +287,31 @@ function normalizeTareas(input) {
     .filter(Boolean);
 }
 
+/* ---------- Middleware de Auditoría Sentinel ----------
+   Bus = Historial de acciones, no log de tráfico HTTP.
+   Solo se registran movimientos reales: métodos mutantes (POST/PUT/PATCH/DELETE)
+   y fallos de acceso (401/403). Se descarta GET de polling (dashboard refresh,
+   /api/me, /api/bus/stats, SSE stream, etc) y cualquier 2xx/3xx de lectura. */
+const POLLING_PATHS = ['/api/bus/stream', '/api/bus/stats', '/api/bus/history', '/api/bus/'];
+function sentinelLogger(req, res, next) {
+  const start = Date.now();
+  res.on('finish', () => {
+    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    const isAccessFailure = res.statusCode === 401 || res.statusCode === 403;
+    if (!isMutation && !isAccessFailure) return;
+    if (POLLING_PATHS.some(p => req.path.startsWith(p))) return;
+    const duration = Date.now() - start;
+    busEmit({
+      id: crypto.randomUUID(), ts: new Date().toISOString(),
+      origin: 'SENTINEL', dest: 'LOG', type: 'event',
+      state: res.statusCode < 400 ? 'COMPLETED' : 'BLOCKED',
+      label: `${req.method} ${req.path} (${res.statusCode})`,
+      payload: { durationMs: duration, ip: req.ip, user: req.user || 'anon' }
+    });
+  });
+  next();
+}
+
 /* ---------- auth ---------- */
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
@@ -136,13 +322,20 @@ function auth(req, res, next) {
   req.role = s.role;
   next();
 }
+app.use(sentinelLogger);
 
-app.post('/api/login', (req, res) => {
+const sentinelForensics = createSentinelForensics({ mongo, busEmit });
+app.use(sentinelForensics.middleware(mesaForPath));
+
+app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   const u = USERS[username];
-  if (!u || u.password !== password) return res.status(401).json({ error: 'Credenciales inválidas' });
+  if (!u || !password || !(await bcrypt.compare(password, u.passwordHash))) {
+    return res.status(401).json({ error: 'Credenciales inválidas' });
+  }
   const token = crypto.randomBytes(24).toString('hex');
   SESSIONS.set(token, { user: username, role: u.role, exp: Date.now() + 1000 * 60 * 60 * 8 });
+  saveSessions();
   // Bus hook: auth event (busEmit defined later — deferred call safe because Express routes run after all top-level code)
   setImmediate(() => busEmit({
     id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
@@ -154,6 +347,7 @@ app.post('/api/login', (req, res) => {
 app.post('/api/logout', auth, (req, res) => {
   const h = req.headers.authorization || '';
   SESSIONS.delete(h.slice(7));
+  saveSessions();
   setImmediate(() => busEmit({
     id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
     origin: 'SENTINEL', dest: 'ELVI-RA', type: 'event', state: 'COMPLETED',
@@ -162,137 +356,200 @@ app.post('/api/logout', auth, (req, res) => {
   res.json({ ok: true });
 });
 app.get('/api/me', auth, (req, res) => res.json({ user: req.user, role: req.role }));
+app.get('/api/me/permissions', auth, (req, res) => {
+  res.json({ mesas: ROLE_MESAS[req.role] || [] });
+});
+
+app.post('/api/change-password', auth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword y newPassword requeridos' });
+  if (newPassword.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+  const u = USERS[req.user];
+  if (!u || !(await bcrypt.compare(currentPassword, u.passwordHash))) {
+    return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+  }
+  u.passwordHash = await bcrypt.hash(newPassword, 12);
+  saveUsers(USERS);
+  busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'SENTINEL', dest: 'ELVI-RA', type: 'event', state: 'COMPLETED',
+    label: `PASSWORD_CHANGE · ${req.user}`, payload: { user: req.user }, user: req.user,
+  });
+  res.json({ ok: true });
+});
+
+/* ---------- mesa guards ---------- */
+app.use('/api/sheets',    auth, requireMesa('reff'));
+app.use('/api/companies', auth, requireMesa('reff'));
+app.use('/api/search',    auth, requireMesa('reff'));
+app.use('/api/overview',  auth, requireMesa('reff'));
+app.use('/api/linkedin',  auth, requireMesa('reff'));
+app.use('/api/email',     auth, requireMesa('reff'));
+app.use('/api/elvira',    auth, requireMesa('elvira'));
+app.use('/api/bus',       auth);
+app.use('/api/sentinel',  auth, requireMesa('sentinel'));
+app.use('/api/snfi-u2',   auth, requireMesa('snfiu2'));
+app.use('/api/u2',        auth, requireMesa('snfiu2'));
+app.use('/api/reff',      auth, requireMesa('reff'));
 
 /* ---------- sheets ---------- */
-app.get('/api/sheets', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  writeDB(db);
-  res.json(u.sheets.map(s => ({ id: s.id, name: s.name, count: s.companies.length, createdAt: s.createdAt })));
+app.get('/api/sheets', auth, async (req, res) => {
+  await ensureUserSheets(req.user);
+  const rows = await mongo.collection('sheets').aggregate([
+    { $match: { user: req.user } },
+    { $lookup: {
+        from: 'companies',
+        localField: '_id',
+        foreignField: 'sheetId',
+        as: 'companies',
+    } },
+    { $addFields: { count: { $size: '$companies' } } },
+    { $project: { companies: 0 } },
+  ]).toArray();
+  res.json(rows.map(r => ({ id: r._id, user: r.user, name: r.name, createdAt: r.createdAt, count: r.count })));
 });
 
-app.post('/api/sheets', auth, (req, res) => {
+app.post('/api/sheets', auth, async (req, res) => {
   const name = String((req.body || {}).name || '').trim();
   if (!name) return res.status(400).json({ error: 'nombre requerido' });
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString(), companies: [] };
-  u.sheets.push(s);
-  writeDB(db);
-  res.status(201).json({ id: s.id, name: s.name, count: 0, createdAt: s.createdAt });
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  await mongo.collection('sheets').insertOne({ _id: id, user: req.user, name, createdAt });
+  res.status(201).json({ id, name, count: 0, createdAt });
 });
 
-app.delete('/api/sheets/:sid', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  if (u.sheets.length <= 1) return res.status(400).json({ error: 'no se puede eliminar la única hoja' });
-  const idx = u.sheets.findIndex(s => s.id === req.params.sid);
-  if (idx < 0) return res.status(404).json({ error: 'hoja no encontrada' });
-  const [removed] = u.sheets.splice(idx, 1);
-  writeDB(db);
-  res.json({ id: removed.id });
+app.delete('/api/sheets/:sid', auth, async (req, res) => {
+  const userSheetCount = await mongo.collection('sheets').countDocuments({ user: req.user });
+  if (userSheetCount <= 1) return res.status(400).json({ error: 'no se puede eliminar la única hoja' });
+
+  const sheet = await mongo.collection('sheets').findOne({ _id: req.params.sid, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'hoja no encontrada' });
+
+  await withTransaction(async (session) => {
+    await mongo.collection('companies').deleteMany({ sheetId: req.params.sid }, { session });
+    await mongo.collection('sheets').deleteOne({ _id: req.params.sid, user: req.user }, { session });
+  });
+  res.json({ id: req.params.sid });
 });
 
 /* ---------- companies ---------- */
-app.get('/api/sheets/:sid/companies', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = findSheet(u, req.params.sid);
-  if (!s) return res.status(404).json({ error: 'hoja no encontrada' });
-  res.json(s.companies);
+app.get('/api/sheets/:sid/companies', auth, async (req, res) => {
+  const sheet = await mongo.collection('sheets').findOne({ _id: req.params.sid, user: req.user });
+  if (!sheet) return res.json([]);
+  const rows = await mongo.collection('companies').find({ sheetId: req.params.sid }).toArray();
+  res.json(rows.map(r => ({ ...r, id: r._id, tareas: r.tareas || [] })));
 });
 
-app.post('/api/sheets/:sid/companies', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = findSheet(u, req.params.sid);
-  if (!s) return res.status(404).json({ error: 'hoja no encontrada' });
+app.post('/api/sheets/:sid/companies', auth, async (req, res) => {
+  const sheet = await mongo.collection('sheets').findOne({ _id: req.params.sid, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'hoja no encontrada' });
+
   const b = req.body || {};
   const c = {
-    id: crypto.randomUUID(),
+    _id: crypto.randomUUID(),
+    sheetId: req.params.sid,
     nodo: String(b.nodo || '').trim(),
     sector: String(b.sector || '').trim(),
     ubicacion: String(b.ubicacion || '').trim(),
     ophs: Number(b.ophs ?? 0),
     bssMwh: Number(b.bssMwh ?? 0),
     cnmc: String(b.cnmc || 'OK').trim(),
-    dictamen: String(b.dictamen || '').trim(),
-    notas: String(b.notas || '').trim(),
-    tipoResiduo: String(b.tipoResiduo || '').trim(),
-    volumenResiduoT: b.volumenResiduoT != null && b.volumenResiduoT !== '' ? Number(b.volumenResiduoT) : null,
-    plantas: b.plantas != null && b.plantas !== '' ? Number(b.plantas) : null,
-    empleados: b.empleados != null && b.empleados !== '' ? Number(b.empleados) : null,
-    facturacionM: b.facturacionM != null && b.facturacionM !== '' ? Number(b.facturacionM) : null,
-    pagaGestion: String(b.pagaGestion || 'DESCONOCIDO').trim(),
-    esg: String(b.esg || '').trim(),
+    dictamen: b.dictamen, notas: b.notas, tipoResiduo: b.tipoResiduo,
+    volumenResiduoT: b.volumenResiduoT, plantas: b.plantas, empleados: b.empleados,
+    facturacionM: b.facturacionM, pagaGestion: b.pagaGestion, esg: b.esg,
     tareas: normalizeTareas(b.tareas),
     createdAt: new Date().toISOString(),
+    source: 'manual'
   };
+
   if (!c.nodo) return res.status(400).json({ error: 'nodo requerido' });
-  s.companies.push(c);
-  writeDB(db);
-  res.status(201).json(c);
+
+  await mongo.collection('companies').insertOne(c);
+
+  res.status(201).json({ ...c, id: c._id });
 });
 
-app.put('/api/sheets/:sid/companies/:cid', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = findSheet(u, req.params.sid);
-  if (!s) return res.status(404).json({ error: 'hoja no encontrada' });
-  const c = s.companies.find(x => x.id === req.params.cid);
+app.put('/api/sheets/:sid/companies/:cid', auth, async (req, res) => {
+  const c = await mongo.collection('companies').findOne({ _id: req.params.cid });
   if (!c) return res.status(404).json({ error: 'empresa no encontrada' });
+  const sheet = await mongo.collection('sheets').findOne({ _id: c.sheetId, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'empresa no encontrada' });
+
   const allowed = ['nodo','sector','ubicacion','ophs','bssMwh','cnmc','dictamen','notas','tareas','tipoResiduo','volumenResiduoT','plantas','empleados','facturacionM','pagaGestion','esg'];
-  for (const k of allowed) if (k in req.body) {
-    c[k] = k === 'tareas' ? normalizeTareas(req.body[k]) : req.body[k];
+  const $set = {};
+  for (const k of allowed) {
+    if (k in req.body) {
+      $set[k] = k === 'tareas' ? normalizeTareas(req.body[k]) : req.body[k];
+    }
   }
-  writeDB(db);
-  res.json(c);
+
+  if (Object.keys($set).length > 0) {
+    await mongo.collection('companies').updateOne({ _id: req.params.cid }, { $set });
+  }
+
+  const updated = await mongo.collection('companies').findOne({ _id: req.params.cid });
+  res.json({ ...updated, id: updated._id, tareas: updated.tareas || [] });
 });
 
-app.delete('/api/sheets/:sid/companies/:cid', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = findSheet(u, req.params.sid);
-  if (!s) return res.status(404).json({ error: 'hoja no encontrada' });
-  const idx = s.companies.findIndex(x => x.id === req.params.cid);
-  if (idx < 0) return res.status(404).json({ error: 'empresa no encontrada' });
-  const [removed] = s.companies.splice(idx, 1);
-  writeDB(db);
-  res.json(removed);
+app.delete('/api/sheets/:sid/companies/:cid', auth, async (req, res) => {
+  const c = await mongo.collection('companies').findOne({ _id: req.params.cid });
+  if (!c) return res.status(404).json({ error: 'empresa no encontrada' });
+  const sheet = await mongo.collection('sheets').findOne({ _id: c.sheetId, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'empresa no encontrada' });
+
+  await mongo.collection('companies').deleteOne({ _id: req.params.cid });
+  res.json({ id: req.params.cid });
 });
 
 /* move company between sheets */
-app.post('/api/companies/:cid/move', auth, (req, res) => {
+app.post('/api/companies/:cid/move', auth, async (req, res) => {
   const { fromSheetId, toSheetId } = req.body || {};
   if (!fromSheetId || !toSheetId) return res.status(400).json({ error: 'fromSheetId/toSheetId requeridos' });
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const src = findSheet(u, fromSheetId);
-  const dst = findSheet(u, toSheetId);
-  if (!src || !dst) return res.status(404).json({ error: 'hoja no encontrada' });
-  const idx = src.companies.findIndex(x => x.id === req.params.cid);
-  if (idx < 0) return res.status(404).json({ error: 'empresa no encontrada' });
-  const [moved] = src.companies.splice(idx, 1);
-  dst.companies.push(moved);
-  writeDB(db);
-  res.json(moved);
+
+  const sheet = await mongo.collection('sheets').findOne({ _id: fromSheetId, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'no se pudo mover la empresa' });
+
+  const result = await mongo.collection('companies').updateOne(
+    { _id: req.params.cid, sheetId: fromSheetId },
+    { $set: { sheetId: toSheetId } },
+  );
+
+  if (result.matchedCount === 0) return res.status(404).json({ error: 'no se pudo mover la empresa' });
+  res.json({ id: req.params.cid, sheetId: toSheetId });
 });
 
 /* aggregate for Dashboard General across all sheets */
-app.get('/api/overview', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const all = u.sheets.flatMap(s => s.companies.map(c => ({ ...c, sheetId: s.id, sheetName: s.name })));
-  const totalBss = all.reduce((a, c) => a + (Number(c.bssMwh) || 0), 0);
-  const avgOphs = all.length ? Math.round(all.reduce((a, c) => a + (Number(c.ophs) || 0), 0) / all.length) : 0;
-  const riesgo = all.filter(c => c.cnmc !== 'OK').length;
+app.get('/api/overview', auth, async (req, res) => {
+  const sheets = await mongo.collection('sheets').find({ user: req.user }).project({ _id: 1, name: 1 }).toArray();
+  const sheetIds = sheets.map(s => s._id);
+
+  const [stats] = await mongo.collection('companies').aggregate([
+    { $match: { sheetId: { $in: sheetIds } } },
+    { $group: {
+        _id: null,
+        totalCompanies: { $sum: 1 },
+        totalBss: { $sum: '$bssMwh' },
+        avgOphs: { $avg: '$ophs' },
+        cnmcRiesgo: { $sum: { $cond: [{ $ne: ['$cnmc', 'OK'] }, 1, 0] } },
+    } },
+  ]).toArray();
+
+  const top = await mongo.collection('companies').aggregate([
+    { $match: { sheetId: { $in: sheetIds } } },
+    { $lookup: { from: 'sheets', localField: 'sheetId', foreignField: '_id', as: 'sheet' } },
+    { $addFields: { sheetName: { $first: '$sheet.name' } } },
+    { $project: { sheet: 0 } },
+    { $sort: { ophs: -1 } },
+    { $limit: 5 },
+  ]).toArray();
+
   res.json({
-    sheets: u.sheets.length,
-    companies: all.length,
-    totalBssMwh: Number(totalBss.toFixed(1)),
-    avgOphs,
-    cnmcRiesgo: riesgo,
-    top: [...all].sort((a, b) => (b.ophs || 0) - (a.ophs || 0)).slice(0, 5),
+    sheets: sheets.length,
+    companies: stats?.totalCompanies || 0,
+    totalBssMwh: Number((stats?.totalBss || 0).toFixed(1)),
+    avgOphs: Math.round(stats?.avgOphs || 0),
+    cnmcRiesgo: stats?.cnmcRiesgo || 0,
+    top: top.map(t => ({ ...t, id: t._id, tareas: t.tareas || [] })),
   });
 });
 
@@ -301,7 +558,7 @@ function readHistory() {
   try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')); }
   catch { return {}; }
 }
-function writeHistory(h) { fs.writeFileSync(HISTORY_FILE, JSON.stringify(h, null, 2)); }
+function writeHistory(h) { atomicWriteJson(HISTORY_FILE, h); }
 function pruneHistory(arr) {
   const cutoff = Date.now() - 48 * 3600 * 1000;
   return arr.filter(x => new Date(x.createdAt).getTime() >= cutoff);
@@ -465,11 +722,16 @@ const callClaude = (userPrompt, user) => callLLMTracked(SYSTEM_PROMPT, userPromp
 
 function extractJson(text) {
   let s = text.trim();
-  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  // Limpiar posibles bloques de markdown antes y después
+  s = s.replace(/^[^{]*/, '').replace(/[^}]*$/, '');
   const first = s.indexOf('{');
   const last = s.lastIndexOf('}');
   if (first < 0 || last < 0) throw new Error('respuesta IA sin JSON');
-  return JSON.parse(s.slice(first, last + 1));
+  try {
+    return JSON.parse(s.slice(first, last + 1));
+  } catch (e) {
+    throw new Error('JSON de la IA mal formado: ' + e.message);
+  }
 }
 
 app.post('/api/search', auth, async (req, res) => {
@@ -542,11 +804,10 @@ SOLO JSON.`;
 });
 
 /* add a search result directly to a sheet */
-app.post('/api/sheets/:sid/companies/from-search', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const s = findSheet(u, req.params.sid);
-  if (!s) return res.status(404).json({ error: 'hoja no encontrada' });
+app.post('/api/sheets/:sid/companies/from-search', auth, async (req, res) => {
+  const sheet = await mongo.collection('sheets').findOne({ _id: req.params.sid, user: req.user });
+  if (!sheet) return res.status(404).json({ error: 'hoja no encontrada' });
+
   const r = req.body || {};
   if (!r.nodo) return res.status(400).json({ error: 'nodo requerido' });
   const dict = r.dictamen && typeof r.dictamen === 'object' ? r.dictamen : {};
@@ -571,7 +832,8 @@ app.post('/api/sheets/:sid/companies/from-search', auth, (req, res) => {
     fuentesArr.length && `Fuentes: ${fuentesArr.join(' · ')}`,
   ].filter(Boolean).join('\n');
   const c = {
-    id: crypto.randomUUID(),
+    _id: crypto.randomUUID(),
+    sheetId: req.params.sid,
     nodo: String(r.nodo).trim(),
     sector: String(r.sector || '').trim(),
     ubicacion: String(r.ubicacion || '').trim(),
@@ -587,36 +849,22 @@ app.post('/api/sheets/:sid/companies/from-search', auth, (req, res) => {
     facturacionM: r.facturacionM != null && r.facturacionM !== '' ? Number(r.facturacionM) : null,
     pagaGestion: String(r.pagaGestion || 'DESCONOCIDO').trim(),
     esg: String(r.esg || '').trim(),
-    fuentes: fuentesArr,
     tareas: [],
     createdAt: new Date().toISOString(),
     source: 'search',
   };
-  s.companies.push(c);
-  writeDB(db);
-  res.status(201).json(c);
+
+  await mongo.collection('companies').insertOne(c);
+
+  res.status(201).json({ ...c, id: c._id, tareas: [] });
 });
 
 /* ---------- companies (cross-sheet helpers para LinkedIn / Email) ---------- */
-app.get('/api/companies/all', auth, (req, res) => {
-  const db = readDB();
-  const u = ensureUser(db, req.user);
-  const all = u.sheets.flatMap(s =>
-    s.companies.map(c => ({
-      id: c.id,
-      nodo: c.nodo,
-      sector: c.sector,
-      ubicacion: c.ubicacion,
-      ophs: c.ophs,
-      bssMwh: c.bssMwh,
-      cnmc: c.cnmc,
-      dictamen: c.dictamen,
-      notas: c.notas,
-      sheetId: s.id,
-      sheetName: s.name,
-    }))
-  );
-  res.json(all);
+app.get('/api/companies/all', auth, async (req, res) => {
+  const sheets = await mongo.collection('sheets').find({ user: req.user }).project({ _id: 1, name: 1 }).toArray();
+  const sheetMap = new Map(sheets.map(s => [s._id, s.name]));
+  const all = await mongo.collection('companies').find({ sheetId: { $in: sheets.map(s => s._id) } }).toArray();
+  res.json(all.map(c => ({ ...c, id: c._id, sheetName: sheetMap.get(c.sheetId) })));
 });
 
 /* ---------- LinkedIn Finder (IA · sugerencias de contactos) ---------- */
@@ -651,14 +899,11 @@ app.post('/api/linkedin', auth, async (req, res) => {
   try {
     const { companyId } = req.body || {};
     if (!companyId) return res.status(400).json({ error: 'companyId requerido' });
-    const db = readDB();
-    const u = ensureUser(db, req.user);
-    let target = null;
-    for (const s of u.sheets) {
-      const c = s.companies.find(x => x.id === companyId);
-      if (c) { target = { ...c, sheetName: s.name }; break; }
-    }
-    if (!target) return res.status(404).json({ error: 'empresa no encontrada' });
+    const targetDoc = await mongo.collection('companies').findOne({ _id: companyId });
+    if (!targetDoc) return res.status(404).json({ error: 'empresa no encontrada' });
+    const sheet = await mongo.collection('sheets').findOne({ _id: targetDoc.sheetId, user: req.user });
+    if (!sheet) return res.status(404).json({ error: 'empresa no encontrada' });
+    const target = { ...targetDoc, id: targetDoc._id, sheetName: sheet.name };
 
     const prompt = `EMPRESA OBJETIVO:
 - NODO: ${target.nodo}
@@ -741,14 +986,11 @@ app.post('/api/email', auth, async (req, res) => {
     const { companyId, situacion, destinatarioRol, tonoExtra } = req.body || {};
     if (!companyId) return res.status(400).json({ error: 'companyId requerido' });
     const sit = situacion === 'solicitud_nda' ? 'solicitud_nda' : 'primer_contacto';
-    const db = readDB();
-    const u = ensureUser(db, req.user);
-    let target = null;
-    for (const s of u.sheets) {
-      const c = s.companies.find(x => x.id === companyId);
-      if (c) { target = c; break; }
-    }
-    if (!target) return res.status(404).json({ error: 'empresa no encontrada' });
+    const target = sqlite.prepare(`
+      SELECT c.* FROM companies c
+      JOIN sheets s ON c.sheetId = s.id
+      WHERE c.id = ? AND s.user = ?
+    `).get(companyId, req.user);
 
     const prompt = `SITUACIÓN: ${sit}
 DESTINATARIO (rol/perfil): ${destinatarioRol || 'Decision-maker industrial'}
@@ -803,18 +1045,17 @@ function readElvira() {
 }
 function writeElvira(state) {
   state.updatedAt = new Date().toISOString();
-  fs.writeFileSync(ELVIRA_FILE, JSON.stringify(state, null, 2));
+  atomicWriteJson(ELVIRA_FILE, state);
 }
 
 /* Overview agregado: estado sistemas + métricas globales */
-app.get('/api/elvira/overview', auth, (req, res) => {
+app.get('/api/elvira/overview', auth, async (req, res) => {
   const state = readElvira();
-  const db = readDB();
   const totalUsers = Object.keys(USERS).length;
   const activeSessions = [...SESSIONS.values()].filter(s => s.exp > Date.now()).length;
-  const totalCompanies = Object.values(db).reduce(
-    (n, u) => n + (u?.sheets || []).reduce((m, s) => m + (s.companies?.length || 0), 0), 0
-  );
+
+  const totalCompanies = await mongo.collection('companies').countDocuments();
+
   res.json({
     systems: state.systems,
     metrics: {
@@ -922,6 +1163,65 @@ app.post('/api/elvira/ophs/score', auth, (req, res) => {
   res.json(dictamen);
 });
 
+/* ---------- T'Controler · consumo de tokens (Admin) ---------- */
+app.get('/api/elvira/tcontroler', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const state = readElvira();
+  const tc = state.systems.tcontroler || {};
+  const byUser = tc.byUser || {};
+  const eurRate = await getUsdToEurRate();
+
+  const users = Object.entries(byUser).map(([user, u]) => {
+    const totalTokens = u.inputTokens + u.outputTokens;
+    const costTotalUSD = (u.inputTokens / 1e6) * PRICE_INPUT_PER_M + (u.outputTokens / 1e6) * PRICE_OUTPUT_PER_M;
+    return {
+      user,
+      calls: u.calls,
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      totalTokens,
+      costTotalUSD,
+      costTotalEUR: costTotalUSD * eurRate,
+      operations: u.operations || {},
+      lastCall: u.lastCall || null,
+    };
+  }).sort((a, b) => b.totalTokens - a.totalTokens);
+
+  const global = users.reduce((acc, u) => {
+    acc.calls += u.calls;
+    acc.inputTokens += u.inputTokens;
+    acc.outputTokens += u.outputTokens;
+    acc.totalTokens += u.totalTokens;
+    acc.costTotalUSD += u.costTotalUSD;
+    acc.costTotalEUR += u.costTotalEUR;
+    return acc;
+  }, { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, costTotalUSD: 0, costTotalEUR: 0 });
+
+  res.json({
+    model: ANTHROPIC_MODEL,
+    pricing: { inputPer1M: PRICE_INPUT_PER_M, outputPer1M: PRICE_OUTPUT_PER_M, usdToEur: eurRate },
+    tokensCap: tc.tokensCap || 0,
+    global,
+    byUser: users,
+    updatedAt: state.updatedAt,
+  });
+});
+
+app.delete('/api/elvira/tcontroler/reset', auth, (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const state = readElvira();
+  const tc = state.systems.tcontroler || (state.systems.tcontroler = { status: 'local', tokensUsed: 0, tokensCap: 0 });
+  tc.byUser = {};
+  tc.tokensUsed = 0;
+  writeElvira(state);
+  setImmediate(() => busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'ELVI-RA', dest: 'TCONTROLER', type: 'event', state: 'COMPLETED',
+    label: `TCONTROLER RESET · ${req.user}`, payload: {}, user: req.user,
+  }));
+  res.json({ ok: true });
+});
+
 /* ---------- OPHS Webhook · puerto de integración externa ---------- */
 /*
  * Receptor de eventos/scores OPHS enviados por sistemas externos.
@@ -1022,6 +1322,13 @@ app.get('/api/elvira/cnmc/documents', auth, (req, res) => {
   res.json(state.cnmc.documents.slice(0, 100));
 });
 
+/* GET /api/elvira/cnmc/audit-log — historial de auditorias CNMC (asimetria declarado vs CNMC) */
+app.get('/api/elvira/cnmc/audit-log', auth, (req, res) => {
+  const state = readElvira();
+  if (!state.cnmc) state.cnmc = { documents: [], auditLog: [] };
+  res.json(state.cnmc.auditLog.slice(0, 100));
+});
+
 /*
  * POST /api/elvira/cnmc/ingest
  * Acepta metadatos + datos tabulados de un informe regulatorio CNMC.
@@ -1094,20 +1401,11 @@ app.post('/api/elvira/cnmc/ingest', auth, (req, res) => {
  * Body opcional: { docId } para forzar un documento específico.
  */
 app.post('/api/elvira/cnmc/audit/:companyId', auth, (req, res) => {
-  const db    = readDB();
   const state = readElvira();
   if (!state.cnmc) state.cnmc = { documents: [], auditLog: [] };
 
-  // Find company across all user sheets
-  let targetCompany = null;
-  let targetSheet   = null;
-  const uBlob = db[req.user];
-  if (uBlob) {
-    for (const s of (uBlob.sheets || [])) {
-      const c = s.companies.find(x => x.id === req.params.companyId);
-      if (c) { targetCompany = c; targetSheet = s; break; }
-    }
-  }
+  const targetCompany = sqlite.prepare('SELECT c.* FROM companies c JOIN sheets s ON c.sheetId = s.id WHERE c.id = ? AND s.user = ?').get(req.params.companyId, req.user);
+  
   if (!targetCompany) return res.status(404).json({ error: 'empresa no encontrada' });
 
   // Find matching CNMC document — by docId (body) or by empresa name match
@@ -1213,7 +1511,12 @@ app.post('/api/elvira/cnmc/audit/:companyId', auth, (req, res) => {
   targetCompany.cnmcAudit  = auditRecord;
   targetCompany.opsBlocked = hasFailed;
   if (hasFailed && targetCompany.cnmc === 'OK') targetCompany.cnmc = 'RIESGO';
-  writeDB(db);
+  
+  // Persistir en SQLite
+  sqlite.prepare(`
+    UPDATE companies SET cnmc = ?, ophs = ophs -- update cnmc status
+    WHERE id = ?
+  `).run(targetCompany.cnmc, targetCompany.id);
 
   // --- Persist in auditLog ---
   state.cnmc.auditLog.unshift(auditRecord);
@@ -1265,7 +1568,7 @@ app.post('/api/elvira/cnmc/audit/:companyId', auth, (req, res) => {
     state.bridges.sentinel.events = state.bridges.sentinel.events.slice(0, 200);
     writeElvira(state);
 
-    // Also emit to bus so Observer picks it up
+    // Also emit to bus for panel pickup
     busEmit({
       id: crypto.randomUUID(), ts: now, seq: busEvents.length + 1,
       origin: 'SENTINEL', dest: 'ELVI-RA', type: 'alert', state: 'BLOCKED',
@@ -1466,70 +1769,15 @@ app.post('/api/elvira/herzog/audits', auth, (req, res) => {
   res.status(201).json(a);
 });
 
-/* ---------- T'Controler · token accounting ---------- */
-app.get('/api/elvira/tcontroler', auth, (req, res) => {
-  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
-  const state = readElvira();
-  const tc = state.systems.tcontroler;
-  const byUser = tc.byUser || {};
-
-  const report = Object.entries(byUser).map(([user, data]) => {
-    const costInput  = (data.inputTokens  / 1_000_000) * PRICE_INPUT_PER_M;
-    const costOutput = (data.outputTokens / 1_000_000) * PRICE_OUTPUT_PER_M;
-    const costTotal  = costInput + costOutput;
-    const ops = Object.entries(data.operations || {}).map(([op, od]) => ({
-      operation: op,
-      calls: od.calls,
-      inputTokens: od.inputTokens,
-      outputTokens: od.outputTokens,
-      costUSD: Number(((od.inputTokens / 1_000_000) * PRICE_INPUT_PER_M + (od.outputTokens / 1_000_000) * PRICE_OUTPUT_PER_M).toFixed(4)),
-    }));
-    return {
-      user,
-      calls: data.calls,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      totalTokens: data.inputTokens + data.outputTokens,
-      costInputUSD: Number(costInput.toFixed(4)),
-      costOutputUSD: Number(costOutput.toFixed(4)),
-      costTotalUSD: Number(costTotal.toFixed(4)),
-      lastCall: data.lastCall || null,
-      operations: ops,
-    };
-  });
-
-  const globalInput  = report.reduce((s, u) => s + u.inputTokens,  0);
-  const globalOutput = report.reduce((s, u) => s + u.outputTokens, 0);
-  const globalCost   = Number(((globalInput / 1_000_000) * PRICE_INPUT_PER_M + (globalOutput / 1_000_000) * PRICE_OUTPUT_PER_M).toFixed(4));
-
-  res.json({
-    model: ANTHROPIC_MODEL,
-    pricing: { inputPer1M: PRICE_INPUT_PER_M, outputPer1M: PRICE_OUTPUT_PER_M, currency: 'USD' },
-    global: { calls: report.reduce((s, u) => s + u.calls, 0), inputTokens: globalInput, outputTokens: globalOutput, totalTokens: globalInput + globalOutput, costTotalUSD: globalCost },
-    byUser: report,
-    tokensCap: tc.tokensCap || 0,
-    updatedAt: state.updatedAt,
-  });
-});
-
-app.delete('/api/elvira/tcontroler/reset', auth, (req, res) => {
-  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
-  const state = readElvira();
-  state.systems.tcontroler.byUser    = {};
-  state.systems.tcontroler.tokensUsed = 0;
-  writeElvira(state);
-  res.json({ ok: true, resetAt: new Date().toISOString() });
-});
-
 /* ============================================================
    EVENT BUS · Bus de eventos central
-   Flujo: Emisor → POST /api/bus/emit → ring-buffer → SSE push → Observer
+   Flujo: Emisor → POST /api/bus/emit → ring-buffer → SSE push → consumidores (panel Elvi-Ra, Sentinel)
 
    Estados de paquete:
      PENDING | ROUTING | VALIDATING | BLOCKED | APPROVED | COMPLETED
    ============================================================ */
 
-/* GET /api/bus/stream — SSE endpoint, Observer lo abre */
+/* GET /api/bus/stream — SSE endpoint */
 app.get('/api/bus/stream', auth, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -1537,7 +1785,7 @@ app.get('/api/bus/stream', auth, (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no'); // nginx: disable buffering
   res.flushHeaders();
 
-  // Send backlog (last 100 events so Observer shows history on connect)
+  // Send backlog (last 100 events so client shows history on connect)
   const backlog = busEvents.slice(0, 100).reverse();
   for (const ev of backlog) {
     res.write(`data: ${JSON.stringify(ev)}\n\n`);
@@ -1618,85 +1866,287 @@ app.get('/api/bus/stats', auth, (req, res) => {
   });
 });
 
+/* GET /api/bus/history — historial persistente, filtrable por fecha/origen/estado/tipo/texto
+ * Query params: from, to (ISO date), origin, dest, state, type, q (busca en label), limit, offset
+ * Orden: más reciente primero.
+ */
+app.get('/api/bus/history', auth, (req, res) => {
+  let history = [];
+  try { history = JSON.parse(fs.readFileSync(BUS_HISTORY_FILE, 'utf8')); }
+  catch { history = []; }
+  if (!Array.isArray(history)) history = [];
+
+  const { from, to, origin, dest, state, type, q } = req.query;
+  const fromMs = from ? new Date(String(from)).getTime() : null;
+  const toMs   = to   ? new Date(String(to)).getTime()   : null;
+  const qLower = q ? String(q).toLowerCase() : '';
+
+  let filtered = history.filter(ev => {
+    const tsMs = new Date(ev.ts).getTime();
+    if (fromMs != null && !Number.isNaN(fromMs) && tsMs < fromMs) return false;
+    if (toMs   != null && !Number.isNaN(toMs)   && tsMs > toMs)   return false;
+    if (origin && ev.origin !== String(origin).toUpperCase()) return false;
+    if (dest   && ev.dest   !== String(dest).toUpperCase())   return false;
+    if (state  && ev.state  !== String(state).toUpperCase())  return false;
+    if (type   && ev.type   !== String(type).toLowerCase())   return false;
+    if (qLower && !String(ev.label || '').toLowerCase().includes(qLower)) return false;
+    return true;
+  });
+
+  filtered.reverse(); // más reciente primero
+
+  const total  = filtered.length;
+  const limit  = Math.min(Math.max(Number(req.query.limit ?? 200), 1), 1000);
+  const offset = Math.max(Number(req.query.offset ?? 0), 0);
+
+  res.json({
+    total,
+    limit,
+    offset,
+    events: filtered.slice(offset, offset + limit),
+  });
+});
+
 /* ============================================================
-   CNMC MOLE · Mesa de energía desperdiciada
-   Fuente: apidatos.ree.es (público, sin token)
-   - Precio spot horario: /datos/mercados/precios-mercados-tiempo-real
-   - Demanda real horaria: /datos/demanda/demanda-tiempo-real
-   Metodología: horas con precio spot <= umbral → exceso = demanda * fracción curtailment
+   SENTINEL · Trazabilidad forense de IPs
+   Log criptográfico inmutable (hash chain + HMAC) + cola de revisión
+   de IPs que exceden rate limit en rutas sensibles (CNMC, U-2).
    ============================================================ */
 
-const APIDATOS_BASE = 'https://apidatos.ree.es';
+/* GET /api/sentinel/forensic-log — paginado, filtrable por ip/mesa/blocked/sensitive */
+app.get('/api/sentinel/forensic-log', auth, async (req, res) => {
+  const { ip, mesa, blocked, sensitive, limit, offset } = req.query;
+  const result = await sentinelForensics.listForensicLog({ ip, mesa, blocked, sensitive, limit, offset });
+  res.json(result);
+});
+
+/* GET /api/sentinel/verify-chain — Admin, valida integridad de la cadena de hashes */
+app.get('/api/sentinel/verify-chain', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const result = await sentinelForensics.verifyChain();
+  res.json(result);
+});
+
+/* GET /api/sentinel/ip-stats — top IPs por volumen de tráfico */
+app.get('/api/sentinel/ip-stats', auth, async (req, res) => {
+  const stats = await sentinelForensics.ipStats();
+  res.json(stats);
+});
+
+/* GET /api/sentinel/traffic-timeline — peticiones/min ultimos N minutos (grafico panel) */
+app.get('/api/sentinel/traffic-timeline', auth, async (req, res) => {
+  const minutes = Math.min(Number(req.query.minutes) || 60, 1440);
+  const timeline = await sentinelForensics.trafficTimeline(minutes);
+  res.json({ minutes, timeline });
+});
+
+/* POST /api/sentinel/block-ip — Admin, bloqueo manual directo desde el panel */
+app.post('/api/sentinel/block-ip', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const { ip, reason } = req.body || {};
+  if (!ip) return res.status(400).json({ error: 'ip requerida' });
+  const updated = await sentinelForensics.manualBlock(ip, reason, req.user);
+  busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'SENTINEL', dest: 'ELVI-RA', type: 'alert', state: 'BLOCKED',
+    label: `IP BLOQUEADA MANUALMENTE · ${ip} · por ${req.user}`, payload: { ip, reason }, user: req.user,
+  });
+  res.json(updated);
+});
+
+/* GET /api/sentinel/review-queue — IPs pendientes/bloqueadas/permitidas */
+app.get('/api/sentinel/review-queue', auth, async (req, res) => {
+  const queue = await sentinelForensics.listReviewQueue();
+  res.json(queue);
+});
+
+/* POST /api/sentinel/review-queue/:ip/decide — Admin concede o bloquea acceso */
+app.post('/api/sentinel/review-queue/:ip/decide', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const { decision } = req.body || {};
+  if (!['ALLOWED', 'BLOCKED'].includes(decision)) return res.status(400).json({ error: 'decision debe ser ALLOWED o BLOCKED' });
+  const updated = await sentinelForensics.decideReview(req.params.ip, decision, req.user);
+  busEmit({
+    id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+    origin: 'SENTINEL', dest: 'ELVI-RA', type: 'event', state: decision === 'BLOCKED' ? 'BLOCKED' : 'APPROVED',
+    label: `IP ${decision} · ${req.params.ip} · por ${req.user}`, payload: { ip: req.params.ip, decision }, user: req.user,
+  });
+  res.json(updated);
+});
+
+/* GET /api/sentinel/review-queue/:ip/report — informe descargable del historial de esa IP */
+app.get('/api/sentinel/review-queue/:ip/report', auth, async (req, res) => {
+  if (req.role !== 'admin') return res.status(403).json({ error: 'admin requerido' });
+  const report = await sentinelForensics.exportIpReport(req.params.ip);
+  res.json(report);
+});
+
+/* ============================================================
+   S-NFI U2 · Mesa de energía desperdiciada
+   Fuente: api.esios.ree.es (token personal ESIOS)
+   - Precio SPOT horario: indicador 600 (geo España)
+   - Demanda real horaria: indicador 1293 (geo Península)
+   - Generación T.Real: eólica 551, solar 1295, hidro 546, nuclear 549
+   Metodología: horas precio SPOT <= umbral → energía desperdiciada estimada
+   ============================================================ */
+
+const ESIOS_BASE = 'https://api.esios.ree.es';
 const PRECIO_CERO_UMBRAL_EUR = 1.0; // EUR/MWh
 
-async function fetchApidatos(path) {
+// REE apidatos.ree.es — público sin token
+const REE_BASE = 'https://apidatos.ree.es/es/datos';
+
+// REE apidatos category/widget paths
+const REE_ENDPOINTS = {
+  precios:  '/mercados/precios-mercados-tiempo-real',
+  demanda:  '/demanda/demanda-tiempo-real',
+  generacion: '/generacion/estructura-generacion',
+};
+
+// IDs within apidatos "included" responses
+const REE_IDS = {
+  pvpc:           1001,
+  precio_spot:    600,
+  dem_prevista:   2052,
+  dem_programada: 2053,
+  dem_real:       2037,
+  hidro:          10288,
+  nuclear:        1446,
+  carbon:         10289,
+  motores_diesel: 10344,
+  turbina_gas:    1450,
+  turbina_vapor:  1451,
+  ciclo_comb:     1454,
+  eolica:         10291,
+  solar_fv:       1458,
+  solar_term:     1459,
+  otras_renov:    10292,
+  cogeneracion:   10293,
+  residuos_norenv:10294,
+  residuos_renov: 10295,
+  gen_total:      1,
+};
+
+async function fetchREE(endpoint, startDate, endDate, timeTrunc = 'hour') {
   const { default: https } = await import('node:https');
-  const url = `${APIDATOS_BASE}${path}`;
+  const url = new URL(`${REE_BASE}${endpoint}`);
+  url.searchParams.set('start_date', `${startDate}T00:00`);
+  url.searchParams.set('end_date',   `${endDate}T23:59`);
+  url.searchParams.set('time_trunc', timeTrunc);
   return new Promise((resolve) => {
-    https.get(url, {
-      headers: { 'Accept': 'application/json', 'User-Agent': 'ElviRa/1.0 (S-NFI Corp; energia)' }
-    }, res => {
+    https.get(url.toString(), { headers: { 'Accept': 'application/json' } }, res => {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
-        try { resolve({ ok: res.statusCode === 200, status: res.statusCode, data: JSON.parse(d) }); }
-        catch { resolve({ ok: false, status: res.statusCode, data: null }); }
+        try {
+          const json = JSON.parse(d);
+          resolve({ ok: res.statusCode === 200, status: res.statusCode, data: json });
+        } catch {
+          resolve({ ok: false, status: res.statusCode, data: null });
+        }
       });
-    }).on('error', (e) => resolve({ ok: false, status: 0, data: null, error: e.message }));
+    }).on('error', e => resolve({ ok: false, status: 0, data: null, error: e.message }));
   });
 }
 
-function buildApidatosParams(start, end) {
-  const s = start.includes('T') ? start : `${start}T00:00`;
-  const e = end.includes('T') ? end : `${end}T23:59`;
-  const base = `?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&time_trunc=hour`;
-  return { precio: base, demanda: base };
+// Extract series by REE numeric id from "included" array
+function extractREESeries(data, id) {
+  const inc = data?.included || [];
+  const item = inc.find(x => x.id === String(id) || x.id === id);
+  return item?.attributes?.values || [];
 }
 
-function findSeries(included, ...keywords) {
-  if (!Array.isArray(included)) return null;
-  return included.find(i =>
-    keywords.some(kw => (i.type || '').toLowerCase().includes(kw.toLowerCase()))
-  ) || null;
-}
-
-function calcularDesperdicioDesdeREE(precioData, demandaData) {
-  // Extract hourly series from apidatos included[] structure
-  // type string varies by API version/locale: 'Spot market price', 'Precio mercado spot', etc.
-  const precioSeries = findSeries(precioData?.included, 'spot', 'precio mercado', 'pvpc');
-  const demandaSeries = findSeries(demandaData?.included, 'real', 'demanda real');
-
-  if (!precioSeries || !demandaSeries) return null;
-
-  const precios  = precioSeries.attributes?.values  || [];
-  const demandas = demandaSeries.attributes?.values || [];
-
-  // Index demand by datetime string (truncated to hour)
-  const demIdx = {};
-  for (const d of demandas) {
-    const key = d.datetime?.substring(0, 13); // "2026-06-04T10"
-    demIdx[key] = d.value; // MW
+// Extract all series as { id -> values[] }
+function extractAllSeries(data) {
+  const inc = data?.included || [];
+  const out = {};
+  for (const x of inc) {
+    out[x.id] = { title: x.attributes?.title, values: x.attributes?.values || [] };
   }
+  return out;
+}
+
+// Index array of {value, datetime} by 'YYYY-MM-DDTHH' key
+function indexByHour(values) {
+  const idx = {};
+  for (const v of values) {
+    const key = (v.datetime || '').substring(0, 13);
+    if (key) idx[key] = v.value;
+  }
+  return idx;
+}
+
+// Fetch a full year (or partial) for an endpoint by splitting into monthly chunks (hour trunc).
+// REE apidatos rejects ranges > 1 month; this stitches the series automatically.
+// yearStart and yearEnd are YYYY-MM-DD strings
+async function fetchREEHourlyYear(endpoint, yearStart, yearEnd) {
+  const allPrecios = [];
+  const allDemanda = [];
+
+  // Build monthly windows
+  const months = [];
+  let cur = new Date(`${yearStart}T00:00:00`);
+  const finalEnd = new Date(`${yearEnd}T23:59:59`);
+  while (cur <= finalEnd) {
+    const mStart = cur.toISOString().split('T')[0];
+    // last day of this calendar month
+    const mLast = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+    const mEnd = mLast > finalEnd ? yearEnd : mLast.toISOString().split('T')[0];
+    months.push({ start: mStart, end: mEnd });
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+
+  // Fetch months in parallel, max 4 concurrent to avoid REE rate limiting
+  const CONCURRENCY = 4;
+  const results = new Array(months.length);
+  for (let i = 0; i < months.length; i += CONCURRENCY) {
+    const batch = months.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(({ start, end }) =>
+      Promise.all([
+        fetchREE(endpoint === 'precios' ? REE_ENDPOINTS.precios : endpoint, start, end, 'hour'),
+        fetchREE(REE_ENDPOINTS.demanda, start, end, 'hour'),
+      ])
+    ));
+    for (let j = 0; j < batchResults.length; j++) results[i + j] = batchResults[j];
+  }
+
+  for (const [pRes, dRes] of results) {
+    if (pRes?.ok) allPrecios.push(...(extractREESeries(pRes.data, REE_IDS.precio_spot)));
+    if (dRes?.ok) allDemanda.push(...(extractREESeries(dRes.data, REE_IDS.dem_real)));
+  }
+
+  return { precioVals: allPrecios, demandaVals: allDemanda };
+}
+
+// Index by 15-min slot 'YYYY-MM-DDTHH:MM'
+function indexBy15(values) {
+  const idx = {};
+  for (const v of values) {
+    const key = (v.datetime || '').substring(0, 16);
+    if (key) idx[key] = v.value;
+  }
+  return idx;
+}
+
+function calcularDesperdicio(precioValues, demandaValues) {
+  const precIdx = indexByHour(precioValues);
+  const demIdx  = indexByHour(demandaValues);
+  const keys = Object.keys(precIdx).sort();
+  if (!keys.length) return null;
 
   let horasPrecioCero = 0;
   let excesoMwh = 0;
   const detalle = [];
 
-  for (const p of precios) {
-    const key = p.datetime?.substring(0, 13);
-    const precio = p.value ?? 999;
+  for (const key of keys) {
+    const precio    = precIdx[key] ?? 999;
     const demandaMw = demIdx[key] ?? null;
-
     if (precio <= PRECIO_CERO_UMBRAL_EUR) {
       horasPrecioCero++;
-      // Cuando precio = 0, la generacion excede demanda.
-      // Estimamos curtailment = 5-15% de la demanda en esas horas (proxy conservador)
-      // Dato real requeriria generacion total, que apidatos no expone sin token.
-      // Usamos 10% de demanda como proxy minimo documentado en literatura REE.
       if (demandaMw != null) {
-        const exceso = demandaMw * 0.10; // MWh (ya en MWh porque es 1h * MW)
+        const exceso = demandaMw * 0.10;
         excesoMwh += exceso;
-        detalle.push({ datetime: p.datetime, precio_eur_mwh: precio, demanda_mw: demandaMw, exceso_mwh: exceso });
+        detalle.push({ datetime: key, precio_eur_mwh: precio, demanda_mw: demandaMw, exceso_mwh: exceso });
       }
     }
   }
@@ -1704,35 +2154,73 @@ function calcularDesperdicioDesdeREE(precioData, demandaData) {
   return {
     horas_precio_cero: horasPrecioCero,
     exceso_gwh: Math.round((excesoMwh / 1000) * 10000) / 10000,
-    generacion_proxy: '10% demanda en horas precio≤1EUR (proxy REE)',
+    generacion_proxy: '10% demanda en horas precio<=1EUR (proxy curtailment REE)',
     detalle_horas: detalle,
   };
 }
 
-/* GET /api/cnmc-mole/waste?start=YYYY-MM-DD&end=YYYY-MM-DD */
-app.get('/api/cnmc-mole/waste', auth, async (req, res) => {
+// Variante para datos de resolución diaria: precio y demanda en time_trunc=day.
+// REE devuelve valores diarios con datetime tipo '2024-01-15T00:00:00.000+01:00';
+// se indexan por 'YYYY-MM-DD'.
+function indexByDay(values) {
+  const idx = {};
+  for (const v of values) {
+    const key = (v.datetime || '').substring(0, 10);
+    if (key) idx[key] = v.value;
+  }
+  return idx;
+}
+
+function calcularDesperdicioDaily(precioValues, demandaValues) {
+  const precIdx = indexByDay(precioValues);
+  const demIdx  = indexByDay(demandaValues);
+  const keys = Object.keys(precIdx).sort();
+  if (!keys.length) return null;
+
+  // demanda diaria viene en MW·h acumulados del día (MWh), precio en EUR/MWh medio diario
+  let diasPrecioCero = 0;
+  let excesoMwh = 0;
+  const detalle = [];
+
+  for (const key of keys) {
+    const precio    = precIdx[key] ?? 999;
+    const demandaMwh = demIdx[key] ?? null; // MWh diarios (time_trunc=day sum)
+    if (precio <= PRECIO_CERO_UMBRAL_EUR) {
+      diasPrecioCero++;
+      if (demandaMwh != null) {
+        // proxy: 10% de la energía diaria desperdiciada
+        const exceso = demandaMwh * 0.10;
+        excesoMwh += exceso;
+        detalle.push({ datetime: key, precio_eur_mwh: precio, demanda_mwh: demandaMwh, exceso_mwh: exceso });
+      }
+    }
+  }
+
+  return {
+    horas_precio_cero: diasPrecioCero, // días con precio <= umbral (misma semántica en histórico)
+    exceso_gwh: Math.round((excesoMwh / 1000) * 10000) / 10000,
+    generacion_proxy: '10% demanda diaria en días precio medio<=1EUR/MWh (proxy curtailment REE)',
+    detalle_horas: detalle,
+  };
+}
+
+/* GET /api/snfi-u2/waste?start=YYYY-MM-DD&end=YYYY-MM-DD */
+app.get('/api/snfi-u2/waste', auth, async (req, res) => {
   try {
     const start = String(req.query.start || '').trim();
     const end   = String(req.query.end   || '').trim();
     if (!start || !end) return res.status(400).json({ error: 'start y end requeridos (YYYY-MM-DD)' });
 
-    const params = buildApidatosParams(start, end);
+    const { precioVals: spotVals, demandaVals: demRealVals } = await fetchREEHourlyYear('precios', start, end);
+    if (!spotVals.length) return res.status(502).json({ error: 'Sin series precio en respuesta REE' });
 
-    const [precioResult, demandaResult] = await Promise.all([
-      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
-      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
-    ]);
-
-    if (!precioResult.ok) return res.status(502).json({ error: `ESIOS precio HTTP ${precioResult.status}` });
-    if (!demandaResult.ok) return res.status(502).json({ error: `ESIOS demanda HTTP ${demandaResult.status}` });
-
-    const calculo = calcularDesperdicioDesdeREE(precioResult.data, demandaResult.data);
-    if (!calculo) return res.status(502).json({ error: 'No se encontraron series precio/demanda en respuesta REE' });
+    const calculo = calcularDesperdicio(spotVals, demRealVals);
+    if (!calculo) return res.status(502).json({ error: 'Sin series precio/demanda en respuesta REE' });
 
     busEmit({
       id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
-      origin: 'ELVI-RA', dest: 'CNMC-MOLE', type: 'event', state: 'COMPLETED',
-      label: `CNMC MOLE · ${start}→${end} · ${calculo.horas_precio_cero}h precio≤1€ · ${calculo.exceso_gwh} GWh`,
+      origin: 'ELVI-RA', dest: 'SNFI-U2', type: 'event', state: 'COMPLETED',
+      label: `S-NFI U2 · ${start}→${end} · ${calculo.horas_precio_cero}h precio<=1€ · ${calculo.exceso_gwh} GWh`,
       payload: { start, end, horas: calculo.horas_precio_cero, gwh: calculo.exceso_gwh },
       user: req.user,
     });
@@ -1740,56 +2228,73 @@ app.get('/api/cnmc-mole/waste', auth, async (req, res) => {
     res.json({
       periodo: { start, end },
       umbral_eur_mwh: PRECIO_CERO_UMBRAL_EUR,
-      metodologia: 'Precio spot peninsular (apidatos.ree.es). Horas ≤ umbral = energía desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
-      fuente: 'apidatos.ree.es — Red Eléctrica de España (público, sin token)',
+      metodologia: 'Precio SPOT peninsular real (REE). Horas <= umbral = energia desperdiciada. Exceso = 10% demanda real.',
+      fuente: 'apidatos.ree.es — Red Electrica de Espana (publico)',
       horas_precio_cero: calculo.horas_precio_cero,
       exceso_gwh: calculo.exceso_gwh,
       detalle_horas: calculo.detalle_horas,
       calculadoAt: new Date().toISOString(),
     });
   } catch (ex) {
-    console.error('[cnmc-mole/waste]', ex);
-    res.status(500).json({ error: ex.message || 'error interno CNMC Mole' });
+    console.error('[snfi-u2/waste]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 WASTE · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error interno S-NFI U2' });
   }
 });
 
-/* GET /api/cnmc-mole/annual?year=2025 — resumen anual (hasta fecha actual si año en curso) */
-app.get('/api/cnmc-mole/annual', auth, async (req, res) => {
+/* GET /api/snfi-u2/annual?year=2025 */
+app.get('/api/snfi-u2/annual', auth, async (req, res) => {
   try {
-    const year = parseInt(req.query.year || new Date().getFullYear(), 10);
-    if (isNaN(year) || year < 2020 || year > 2030) return res.status(400).json({ error: 'year inválido' });
-
     const today = new Date();
-    const endDate = (year < today.getFullYear())
-      ? `${year}-12-31`
-      : today.toISOString().split('T')[0];
+    const currentYear = today.getFullYear();
+    const year = parseInt(req.query.year || currentYear, 10);
+    if (isNaN(year) || year < 2020 || year > 2030) return res.status(400).json({ error: 'year invalido' });
 
+    // Serve from historic cache if available (shares cache with /historic)
+    const cached = historicCacheGet(year, currentYear);
+    if (cached) {
+      return res.json({
+        year: cached.year,
+        periodo_analizado: cached.periodo,
+        umbral_eur_mwh: PRECIO_CERO_UMBRAL_EUR,
+        total_gwh_desperdiciados: cached.exceso_gwh,
+        total_horas_precio_cero: cached.horas_precio_cero,
+        metodologia: 'Precio SPOT peninsular <= 1 EUR/MWh. Exceso = 10% demanda real.',
+        fuente: 'apidatos.ree.es — Red Electrica de Espana (publico)',
+        mensual: cached.mensual,
+        calculadoAt: new Date().toISOString(),
+        cached: true,
+      });
+    }
+
+    const endDate = (year < currentYear) ? `${year}-12-31` : today.toISOString().split('T')[0];
     const start = `${year}-01-01`;
-    const params = buildApidatosParams(start, endDate);
 
-    const [precioResult, demandaResult] = await Promise.all([
-      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
-      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
-    ]);
+    const { precioVals: spotVals, demandaVals: demRealVals } = await fetchREEHourlyYear('precios', start, endDate);
+    if (!spotVals.length) return res.status(502).json({ error: 'Sin datos REE para el periodo' });
 
-    if (!precioResult.ok) return res.status(502).json({ error: `ESIOS precio HTTP ${precioResult.status}` });
-    if (!demandaResult.ok) return res.status(502).json({ error: `ESIOS demanda HTTP ${demandaResult.status}` });
-
-    const calculo = calcularDesperdicioDesdeREE(precioResult.data, demandaResult.data);
+    const calculo = calcularDesperdicio(spotVals, demRealVals);
     if (!calculo) return res.status(502).json({ error: 'Sin datos REE para el periodo' });
 
-    // Monthly breakdown from detalle_horas
     const porMes = {};
     for (const h of calculo.detalle_horas) {
-      const mes = h.datetime?.substring(0, 7); // "2026-06"
+      const mes = h.datetime?.substring(0, 7);
       if (!mes) continue;
       if (!porMes[mes]) porMes[mes] = { mes, horas: 0, exceso_gwh: 0 };
       porMes[mes].horas++;
       porMes[mes].exceso_gwh = Math.round((porMes[mes].exceso_gwh + h.exceso_mwh / 1000) * 10000) / 10000;
     }
 
-    const referencia = { 2023: 2100, 2024: 3600, 2025: 5000 };
-    const refGwh = referencia[year] || null;
+    const result = {
+      year,
+      completo: year < currentYear,
+      periodo: { start, end: endDate },
+      exceso_gwh: calculo.exceso_gwh,
+      horas_precio_cero: calculo.horas_precio_cero,
+      mensual: Object.values(porMes),
+      error: null,
+    };
+    historicCacheSet(year, result);
 
     res.json({
       year,
@@ -1798,22 +2303,42 @@ app.get('/api/cnmc-mole/annual', auth, async (req, res) => {
       total_gwh_desperdiciados: calculo.exceso_gwh,
       total_horas_precio_cero: calculo.horas_precio_cero,
       metodologia: calculo.generacion_proxy,
-      fuente: 'apidatos.ree.es — Red Eléctrica de España (público, sin token)',
-      referencia_historica_gwh: refGwh,
-      pct_vs_referencia: refGwh ? Math.round((calculo.exceso_gwh / refGwh) * 1000) / 10 : null,
+      fuente: 'apidatos.ree.es — Red Electrica de Espana (publico)',
       mensual: Object.values(porMes),
       calculadoAt: new Date().toISOString(),
     });
   } catch (ex) {
-    console.error('[cnmc-mole/annual]', ex);
-    res.status(500).json({ error: ex.message || 'error interno CNMC Mole' });
+    console.error('[snfi-u2/annual]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 ANNUAL · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error interno S-NFI U2' });
   }
 });
 
-/* GET /api/cnmc-mole/historic?from=2020&to=2026
-   Agrega datos anuales de desperdicio energetico desde `from` hasta `to`.
-   Cada ano = una llamada a apidatos. Respuesta unica con array por ano. */
-app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
+/* Historic year-level disk cache — past years never change, current year expires 4h */
+const HISTORIC_CACHE_FILE = path.join(DATA_DIR, 'cnmc_historic_cache.json');
+let historicCache = {};
+try {
+  if (fs.existsSync(HISTORIC_CACHE_FILE)) {
+    historicCache = JSON.parse(fs.readFileSync(HISTORIC_CACHE_FILE, 'utf8'));
+  }
+} catch { historicCache = {}; }
+
+function historicCacheGet(year, currentYear) {
+  const entry = historicCache[year];
+  if (!entry) return null;
+  if (year < currentYear) return entry.data; // past year: never expires
+  const age = Date.now() - (entry.ts || 0);
+  if (age < 4 * 60 * 60 * 1000) return entry.data; // current year: 4h TTL
+  return null;
+}
+
+function historicCacheSet(year, data) {
+  historicCache[year] = { ts: Date.now(), data };
+  atomicWriteJson(HISTORIC_CACHE_FILE, historicCache);
+}
+
+/* GET /api/snfi-u2/historic?from=2022&to=2026 */
+app.get('/api/snfi-u2/historic', auth, async (req, res) => {
   try {
     const today = new Date();
     const currentYear = today.getFullYear();
@@ -1825,31 +2350,22 @@ app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
     const years = [];
     for (let y = fromYear; y <= toYear; y++) years.push(y);
 
-    // Fetch years sequentially to avoid hammering apidatos with 7 parallel requests
-    const resultados = [];
-    for (const year of years) {
+    const resultados = await Promise.all(years.map(async year => {
+      // Return cached result if available
+      const cached = historicCacheGet(year, currentYear);
+      if (cached) return cached;
+
       try {
         const endDate = year < currentYear ? `${year}-12-31` : today.toISOString().split('T')[0];
         const start   = `${year}-01-01`;
-        const params  = buildApidatosParams(start, endDate);
 
-        const [precioRes, demandaRes] = await Promise.all([
-          fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params}`),
-          fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params}`),
-        ]);
+        const { precioVals, demandaVals } = await fetchREEHourlyYear('precios', start, endDate);
 
-        if (!precioRes.ok || !demandaRes.ok) {
-          resultados.push({ year, error: `HTTP precio:${precioRes.status} demanda:${demandaRes.status}`, exceso_gwh: null, horas_precio_cero: null });
-          continue;
+        const calculo = calcularDesperdicio(precioVals, demandaVals);
+        if (!calculo || !precioVals.length) {
+          return { year, error: 'sin series en respuesta REE', exceso_gwh: null, horas_precio_cero: null };
         }
 
-        const calculo = calcularDesperdicioDesdeREE(precioRes.data, demandaRes.data);
-        if (!calculo) {
-          resultados.push({ year, error: 'sin series en respuesta REE', exceso_gwh: null, horas_precio_cero: null });
-          continue;
-        }
-
-        // Monthly breakdown
         const porMes = {};
         for (const h of calculo.detalle_horas) {
           const mes = h.datetime?.substring(0, 7);
@@ -1859,7 +2375,7 @@ app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
           porMes[mes].exceso_gwh = Math.round((porMes[mes].exceso_gwh + h.exceso_mwh / 1000) * 10000) / 10000;
         }
 
-        resultados.push({
+        const result = {
           year,
           completo: year < currentYear,
           periodo: { start, end: endDate },
@@ -1867,11 +2383,13 @@ app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
           horas_precio_cero: calculo.horas_precio_cero,
           mensual: Object.values(porMes),
           error: null,
-        });
+        };
+        historicCacheSet(year, result);
+        return result;
       } catch (yearErr) {
-        resultados.push({ year, error: yearErr.message, exceso_gwh: null, horas_precio_cero: null });
+        return { year, error: yearErr.message, exceso_gwh: null, horas_precio_cero: null };
       }
-    }
+    }));
 
     const totalGwh   = resultados.reduce((s, r) => s + (r.exceso_gwh || 0), 0);
     const totalHoras = resultados.reduce((s, r) => s + (r.horas_precio_cero || 0), 0);
@@ -1879,8 +2397,8 @@ app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
 
     busEmit({
       id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
-      origin: 'ELVI-RA', dest: 'CNMC-MOLE', type: 'event', state: 'COMPLETED',
-      label: `CNMC MOLE HISTORICO · ${fromYear}-${toYear} · ${Math.round(totalGwh)} GWh acumulados`,
+      origin: 'ELVI-RA', dest: 'SNFI-U2', type: 'event', state: 'COMPLETED',
+      label: `S-NFI U2 HISTORICO · ${fromYear}-${toYear} · ${Math.round(totalGwh)} GWh acumulados`,
       payload: { fromYear, toYear, totalGwh: Math.round(totalGwh), anos: resultados.length },
       user: req.user,
     });
@@ -1891,64 +2409,59 @@ app.get('/api/cnmc-mole/historic', auth, async (req, res) => {
       total_gwh_acumulados: Math.round(totalGwh * 100) / 100,
       total_horas_acumuladas: totalHoras,
       max_gwh_ano: maxGwh,
-      fuente: 'apidatos.ree.es — Red Electrica de Espana (publico, sin token)',
-      metodologia: 'Precio spot peninsular <= 1 EUR/MWh = hora desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
+      fuente: 'apidatos.ree.es — Red Electrica de Espana (publico)',
+      metodologia: 'Precio SPOT peninsular <= 1 EUR/MWh = hora desperdiciada. Exceso = 10% demanda real.',
       anos: resultados,
       calculadoAt: new Date().toISOString(),
     });
   } catch (ex) {
-    console.error('[cnmc-mole/historic]', ex);
-    res.status(500).json({ error: ex.message || 'error historico CNMC Mole' });
+    console.error('[snfi-u2/historic]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 HISTORICO · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error historico S-NFI U2' });
   }
 });
 
 /* ============================================================
-   CNMC MOLE · Live monitor — precio spot 15-min en tiempo real
-   Poller: cada 5 min fetch apidatos → cache en memoria → SSE push
-   Endpoint: GET /api/cnmc-mole/live → ultimo snapshot + serie hoy
+   S-NFI U2 · Live monitor
+   Poller: cada 5 min REE apidatos → cache → SSE push
    ============================================================ */
 
-const LIVE_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 min
-const LIVE_HISTORY_MAX_DAYS = 7; // keep last 7 days of snapshots in memory
+const LIVE_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const LIVE_HISTORY_MAX_DAYS = 7;
 
-// Ring-buffer de snapshots diarios (en memoria, se pierde al reiniciar)
-// Estructura: Map<"YYYY-MM-DD", { intervals: [], computed: {} }>
 const liveCache = new Map();
 let liveLastUpdated = null;
 let liveIsPolling = false;
+let generacionCache = null;
+let generacionLastUpdated = null;
 
-function buildApidatosParams15min(date) {
-  const s = `${date}T00:00`;
-  const e = `${date}T23:59`;
-  const base = `?start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}&time_trunc=hour`;
-  return { precio: base, demanda: base };
-}
-
-function computeLiveStats(priceValues, demandValues) {
-  // demandValues indexed by hour key "YYYY-MM-DDTHH"
-  const demIdx = {};
-  for (const d of demandValues) {
-    const key = d.datetime?.substring(0, 13);
-    if (key) demIdx[key] = d.value;
-  }
+function computeLiveStats(spotValues, demPrevistaValues, demProgramadaValues, demRealValues) {
+  // spot has 15-min granularity (96/day), demanda has 5-min (288/day)
+  // index spot by 15-min slot, demanda by 5-min slot
+  const spotIdx = indexBy15(spotValues);
+  const demRealIdx = indexByHour(demRealValues);
+  const demPrevIdx = indexByHour(demPrevistaValues);
+  const demProgIdx = indexByHour(demProgramadaValues);
 
   let negativeCount = 0;
-  let zeroCount = 0;
   let totalExcesoMwh = 0;
   const intervals = [];
   let minPrice = Infinity;
   let maxPrice = -Infinity;
 
-  for (const p of priceValues) {
-    const precio = p.value ?? 999;
-    const key = p.datetime?.substring(0, 13);
-    const demMw = demIdx[key] ?? null;
-    const isWasted = precio <= PRECIO_CERO_UMBRAL_EUR;
+  // Use spot as primary series (15-min)
+  for (const p of spotValues) {
+    const precio     = p.value ?? 999;
+    const slotKey    = (p.datetime || '').substring(0, 16);
+    const hourKey    = (p.datetime || '').substring(0, 13);
+    const demMw      = demRealIdx[hourKey] ?? null;
+    const prevMw     = demPrevIdx[hourKey] ?? null;
+    const progMw     = demProgIdx[hourKey] ?? null;
+    const isWasted   = precio <= PRECIO_CERO_UMBRAL_EUR;
     const isNegative = precio < 0;
-    const excesoMwh = (isWasted && demMw != null) ? demMw * 0.10 : 0;
+    const excesoMwh  = (isWasted && demMw != null) ? demMw * 0.10 : 0;
 
     if (isNegative) negativeCount++;
-    if (precio === 0) zeroCount++;
     if (isWasted) totalExcesoMwh += excesoMwh;
     if (precio < minPrice) minPrice = precio;
     if (precio > maxPrice) maxPrice = precio;
@@ -1957,6 +2470,8 @@ function computeLiveStats(priceValues, demandValues) {
       datetime: p.datetime,
       precio_eur_mwh: precio,
       demanda_mw: demMw,
+      demanda_prevista_mw: prevMw,
+      demanda_programada_mw: progMw,
       desperdiciada: isWasted,
       negativa: isNegative,
       exceso_mwh: excesoMwh,
@@ -1981,82 +2496,142 @@ async function pollLiveData() {
   liveIsPolling = true;
   try {
     const today = new Date().toISOString().split('T')[0];
-    const params = buildApidatosParams15min(today);
 
     const [precioRes, demandaRes] = await Promise.all([
-      fetchApidatos(`/en/datos/mercados/precios-mercados-tiempo-real${params.precio}`),
-      fetchApidatos(`/en/datos/demanda/demanda-tiempo-real${params.demanda}`),
+      fetchREE(REE_ENDPOINTS.precios, today, today, 'hour'),
+      fetchREE(REE_ENDPOINTS.demanda, today, today, 'hour'),
     ]);
 
     if (!precioRes.ok || !demandaRes.ok) {
-      console.warn(`[cnmc-mole/live] poll failed: precio=${precioRes.status} demanda=${demandaRes.status}`);
+      console.warn(`[snfi-u2/live] poll failed: precios=${precioRes.status} demanda=${demandaRes.status}`);
       return;
     }
 
-    const priceSeries = findSeries(precioRes.data?.included, 'spot', 'precio mercado', 'pvpc');
-    const demandSeries = findSeries(demandaRes.data?.included, 'real', 'demanda real');
+    const spotVals    = extractREESeries(precioRes.data,  REE_IDS.precio_spot);
+    const pvpcVals    = extractREESeries(precioRes.data,  REE_IDS.pvpc);
+    const demPrevVals = extractREESeries(demandaRes.data, REE_IDS.dem_prevista);
+    const demProgVals = extractREESeries(demandaRes.data, REE_IDS.dem_programada);
+    const demRealVals = extractREESeries(demandaRes.data, REE_IDS.dem_real);
 
-    if (!priceSeries || !demandSeries) {
-      const types = (precioRes.data?.included || []).map(i => i.type).concat(
-        (demandaRes.data?.included || []).map(i => i.type)
-      );
-      console.warn('[cnmc-mole/live] series not found. Available types:', types.join(', ') || '(empty)');
+    if (!spotVals.length) {
+      console.warn('[snfi-u2/live] no spot values from REE');
       return;
     }
 
-    const stats = computeLiveStats(
-      priceSeries.attributes?.values || [],
-      demandSeries.attributes?.values || [],
-    );
-
-    liveCache.set(today, { date: today, updatedAt: new Date().toISOString(), ...stats });
+    const stats = computeLiveStats(spotVals, demPrevVals, demProgVals, demRealVals);
+    liveCache.set(today, {
+      date: today,
+      updatedAt: new Date().toISOString(),
+      pvpc_series: pvpcVals,
+      ...stats,
+    });
     liveLastUpdated = new Date().toISOString();
 
-    // Evict old days
     const days = [...liveCache.keys()].sort();
-    while (days.length > LIVE_HISTORY_MAX_DAYS) {
-      liveCache.delete(days.shift());
-    }
+    while (days.length > LIVE_HISTORY_MAX_DAYS) liveCache.delete(days.shift());
 
-    // Push SSE event to Observer
     busEmit({
-      id: crypto.randomUUID(),
-      ts: new Date().toISOString(),
-      seq: busEvents.length + 1,
-      origin: 'CNMC-MOLE',
-      dest: 'ELVI-RA',
-      type: 'event',
-      state: stats.en_desperdicio_ahora ? 'BLOCKED' : 'COMPLETED',
-      label: `CNMC MOLE LIVE · ${today} · precio=${stats.precio_actual_eur_mwh} EUR/MWh · ${stats.intervalos_negativos} neg · ${stats.exceso_gwh_hoy} GWh`,
-      payload: {
-        date: today,
-        precio_actual: stats.precio_actual_eur_mwh,
-        en_desperdicio: stats.en_desperdicio_ahora,
-        exceso_gwh_hoy: stats.exceso_gwh_hoy,
-        intervalos_negativos: stats.intervalos_negativos,
-      },
+      id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+      origin: 'SNFI-U2', dest: 'ELVI-RA', type: 'event',
+      state: stats.exceso_gwh_hoy > 0 ? 'BLOCKED' : 'COMPLETED',
+      label: `S-NFI U2 LIVE · ${today} · ${stats.intervalos_negativos} neg · ${stats.exceso_gwh_hoy} GWh`,
+      payload: { date: today, exceso_gwh_hoy: stats.exceso_gwh_hoy, intervalos_negativos: stats.intervalos_negativos },
       user: 'system',
     });
   } catch (err) {
-    console.error('[cnmc-mole/live] poll error:', err.message);
+    console.error('[snfi-u2/live] poll error:', err.message);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 LIVE · poll fallido`, detail: err.message, user: 'system' });
   } finally {
     liveIsPolling = false;
   }
 }
 
-// Start poller immediately then every 5 min
-pollLiveData();
-setInterval(pollLiveData, LIVE_POLL_INTERVAL_MS);
+async function pollGeneracion() {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const [genRes, demandaRes] = await Promise.all([
+      fetchREE(REE_ENDPOINTS.generacion, today, today, 'day'),
+      fetchREE(REE_ENDPOINTS.demanda,    today, today, 'hour'),
+    ]);
 
-/* GET /api/cnmc-mole/live — snapshot actual + serie del dia
-   Si cache vacio, hace fetch sincrono a apidatos antes de responder. */
-app.get('/api/cnmc-mole/live', auth, async (req, res) => {
+    if (!genRes.ok) return;
+
+    const series = extractAllSeries(genRes.data);
+    const demSeries = extractAllSeries(demandaRes.ok ? demandaRes.data : { included: [] });
+
+    // Build snapshot: last value per technology
+    const snap = {};
+    for (const [id, { title, values }] of Object.entries(series)) {
+      if (!values.length) continue;
+      snap[id] = { title, value_mwh: values[values.length - 1]?.value ?? null };
+    }
+
+    // Aggregate categories
+    const get = (id) => snap[String(id)]?.value_mwh ?? 0;
+    const totalGen  = get(REE_IDS.gen_total) || Object.values(snap).reduce((s, v) => s + (v.value_mwh || 0), 0);
+    const renovable = get(REE_IDS.eolica) + get(REE_IDS.solar_fv) + get(REE_IDS.solar_term) +
+                      get(REE_IDS.hidro) + get(REE_IDS.otras_renov) + get(REE_IDS.residuos_renov);
+    const libreCO2  = renovable + get(REE_IDS.nuclear);
+    const pctRenov  = totalGen > 0 ? Math.round((renovable / totalGen) * 1000) / 10 : null;
+    const pctCO2    = totalGen > 0 ? Math.round((libreCO2  / totalGen) * 1000) / 10 : null;
+
+    // Demanda real last value
+    const demRealVals = extractREESeries(demandaRes.ok ? demandaRes.data : {}, REE_IDS.dem_real);
+    const demandaNow  = demRealVals.length ? demRealVals[demRealVals.length - 1]?.value : null;
+    const demPrevVals = extractREESeries(demandaRes.ok ? demandaRes.data : {}, REE_IDS.dem_prevista);
+    const demProgVals = extractREESeries(demandaRes.ok ? demandaRes.data : {}, REE_IDS.dem_programada);
+    const demPrevNow  = demPrevVals.length  ? demPrevVals[demPrevVals.length - 1]?.value   : null;
+    const demProgNow  = demProgVals.length  ? demProgVals[demProgVals.length - 1]?.value   : null;
+
+    generacionCache = {
+      updatedAt: new Date().toISOString(),
+      date: today,
+      snapshot: {
+        eolica_mwh:           get(REE_IDS.eolica),
+        solar_fv_mwh:         get(REE_IDS.solar_fv),
+        solar_term_mwh:       get(REE_IDS.solar_term),
+        hidro_mwh:            get(REE_IDS.hidro),
+        nuclear_mwh:          get(REE_IDS.nuclear),
+        ciclo_comb_mwh:       get(REE_IDS.ciclo_comb),
+        carbon_mwh:           get(REE_IDS.carbon),
+        cogeneracion_mwh:     get(REE_IDS.cogeneracion),
+        otras_renov_mwh:      get(REE_IDS.otras_renov),
+        residuos_renov_mwh:   get(REE_IDS.residuos_renov),
+        residuos_norenov_mwh: get(REE_IDS.residuos_norenv),
+        total_gen_mwh:        totalGen,
+        total_renovable_mwh:  renovable,
+        total_libre_co2_mwh:  libreCO2,
+        pct_renovable:        pctRenov,
+        pct_libre_co2:        pctCO2,
+        demanda_real_mw:      demandaNow,
+        demanda_prevista_mw:  demPrevNow,
+        demanda_programada_mw: demProgNow,
+      },
+      series_demanda: {
+        prevista:    extractREESeries(demandaRes.ok ? demandaRes.data : {}, REE_IDS.dem_prevista),
+        programada:  extractREESeries(demandaRes.ok ? demandaRes.data : {}, REE_IDS.dem_programada),
+        real:        demRealVals,
+      },
+      tecnologias: snap,
+    };
+    generacionLastUpdated = generacionCache.updatedAt;
+  } catch (err) {
+    console.error('[snfi-u2/generacion] poll error:', err.message);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 GENERACION · poll fallido`, detail: err.message, user: 'system' });
+  }
+}
+
+pollLiveData();
+pollGeneracion();
+setInterval(pollLiveData,   LIVE_POLL_INTERVAL_MS);
+setInterval(pollGeneracion, LIVE_POLL_INTERVAL_MS);
+
+/* GET /api/snfi-u2/live */
+app.get('/api/snfi-u2/live', auth, async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
-  // Si no hay snapshot para hoy, esperar a que termine el poll en curso o lanzar uno nuevo
   if (!liveCache.has(today)) {
     if (liveIsPolling) {
-      // Wait up to 20s for the in-flight poll to complete
       await new Promise(resolve => {
         const t0 = Date.now();
         const check = setInterval(() => {
@@ -2069,24 +2644,34 @@ app.get('/api/cnmc-mole/live', auth, async (req, res) => {
   }
 
   const rawSnap = liveCache.get(today) || null;
-
-  // Filter to past/current intervals at serve time — REE publishes full day ahead
   let snapshot = null;
   if (rawSnap) {
-    const nowIso = new Date().toISOString();
-    const past = (rawSnap.all_intervals || []).filter(i => i.datetime <= nowIso);
+    const nowIso  = new Date().toISOString();
+    const past    = (rawSnap.all_intervals || []).filter(i => i.datetime <= nowIso);
     const display = past.length ? past : (rawSnap.all_intervals || []).slice(0, 1);
     const current = display[display.length - 1] || null;
-    const wastedNow  = display.filter(i => i.desperdiciada).length;
-    const negNow     = display.filter(i => i.negativa).length;
-    const excesoNow  = display.reduce((s, i) => s + (i.exceso_mwh || 0), 0);
+    const wastedNow = display.filter(i => i.desperdiciada).length;
+    const negNow    = display.filter(i => i.negativa).length;
+    const excesoNow = display.reduce((s, i) => s + (i.exceso_mwh || 0), 0);
     snapshot = {
       ...rawSnap,
+      all_intervals: undefined,
+      pvpc_series: rawSnap.pvpc_series,
       intervalos_totales: display.length,
       intervalos_desperdiciados: wastedNow,
       intervalos_negativos: negNow,
       exceso_gwh_hoy: Math.round((excesoNow / 1000) * 10000) / 10000,
       precio_actual_eur_mwh: current ? current.precio_eur_mwh : null,
+      pvpc_actual_eur_mwh: rawSnap.pvpc_series?.length
+        ? (() => {
+            const nowH = new Date().toISOString().substring(0, 13);
+            const match = rawSnap.pvpc_series.find(v => (v.datetime||'').substring(0,13) === nowH);
+            return match ? match.value : rawSnap.pvpc_series[rawSnap.pvpc_series.length - 1]?.value ?? null;
+          })()
+        : null,
+      demanda_actual_mw: current ? current.demanda_mw : null,
+      demanda_prevista_mw: current ? current.demanda_prevista_mw : null,
+      demanda_programada_mw: current ? current.demanda_programada_mw : null,
       pct_horas_desperdiciadas: display.length ? Math.round((wastedNow / display.length) * 1000) / 10 : 0,
       en_desperdicio_ahora: current ? current.desperdiciada : false,
       intervals: display,
@@ -2110,9 +2695,591 @@ app.get('/api/cnmc-mole/live', auth, async (req, res) => {
     today,
     snapshot,
     history_days: history,
-    fuente: 'apidatos.ree.es — Red Electrica de Espana (publico, sin token)',
-    metodologia: 'Precio spot peninsular <= 1 EUR/MWh = energia desperdiciada. Exceso = 10% demanda real (proxy curtailment REE).',
+    fuente: 'apidatos.ree.es — Red Electrica de Espana (publico)',
+    metodologia: 'Precio SPOT peninsular <= 1 EUR/MWh = energia desperdiciada. Exceso = 10% demanda real. PVPC tarifa regulada.',
   });
+});
+
+/* GET /api/snfi-u2/generacion — mix generacion + demanda tiempo real */
+app.get('/api/snfi-u2/generacion', auth, async (req, res) => {
+  if (!generacionCache) await pollGeneracion();
+  if (!generacionCache) return res.status(503).json({ error: 'Sin datos generacion aun, reintenta en 10s' });
+  res.json({
+    ...generacionCache,
+    fuente: 'apidatos.ree.es — estructura-generacion + demanda-tiempo-real (publico)',
+  });
+});
+
+/* GET /api/snfi-u2/renewables — alias hacia generacion (compatibilidad) */
+app.get('/api/snfi-u2/renewables', auth, async (req, res) => {
+  if (!generacionCache) await pollGeneracion();
+  if (!generacionCache) return res.status(503).json({ error: 'Sin datos renovables aun, reintenta en 10s' });
+
+  const s = generacionCache.snapshot;
+  res.json({
+    updatedAt: generacionCache.updatedAt,
+    date: generacionCache.date,
+    snapshot: {
+      eolica_mw:          s.eolica_mwh,
+      solar_mw:           s.solar_fv_mwh + s.solar_term_mwh,
+      solar_fv_mw:        s.solar_fv_mwh,
+      solar_term_mw:      s.solar_term_mwh,
+      hidro_mw:           s.hidro_mwh,
+      nuclear_mw:         s.nuclear_mwh,
+      ciclo_comb_mw:      s.ciclo_comb_mwh,
+      carbon_mw:          s.carbon_mwh,
+      cogeneracion_mw:    s.cogeneracion_mwh,
+      otras_renov_mw:     s.otras_renov_mwh,
+      demanda_mw:         s.demanda_real_mw,
+      demanda_prevista_mw: s.demanda_prevista_mw,
+      demanda_programada_mw: s.demanda_programada_mw,
+      total_generacion_mwh: s.total_gen_mwh,
+      total_renovable_mwh:  s.total_renovable_mwh,
+      pct_renovable:        s.pct_renovable,
+      pct_libre_co2:        s.pct_libre_co2,
+    },
+    series: {
+      demanda_prevista:   generacionCache.series_demanda.prevista,
+      demanda_programada: generacionCache.series_demanda.programada,
+      demanda_real:       generacionCache.series_demanda.real,
+    },
+    fuente: 'apidatos.ree.es — publico',
+  });
+});
+
+/* GET /api/snfi-u2/renewables-historic?from=2022&to=2026 */
+app.get('/api/snfi-u2/renewables-historic', auth, async (req, res) => {
+  try {
+    const today       = new Date();
+    const currentYear = today.getFullYear();
+    const fromYear = Math.max(2022, Math.min(parseInt(req.query.from || '2022', 10), currentYear));
+    const toYear   = Math.min(currentYear, Math.max(parseInt(req.query.to   || String(currentYear), 10), fromYear));
+
+    if (isNaN(fromYear) || isNaN(toYear)) return res.status(400).json({ error: 'from/to invalidos' });
+
+    const years = [];
+    for (let y = fromYear; y <= toYear; y++) years.push(y);
+
+    const resultados = [];
+    for (const year of years) {
+      try {
+        const endDate = year < currentYear ? `${year}-12-31` : today.toISOString().split('T')[0];
+        const start   = `${year}-01-01`;
+
+        const [genRes, precioRes] = await Promise.all([
+          fetchREE(REE_ENDPOINTS.generacion, start, endDate, 'month'),
+          fetchREE(REE_ENDPOINTS.precios,    start, endDate, 'month'),
+        ]);
+
+        const avgSeries = (data, id) => {
+          const vals = extractREESeries(data, id).map(v => v.value).filter(v => v != null);
+          return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : null;
+        };
+
+        const eolica    = genRes.ok ? avgSeries(genRes.data, REE_IDS.eolica)    : null;
+        const solar_fv  = genRes.ok ? avgSeries(genRes.data, REE_IDS.solar_fv)  : null;
+        const solar_t   = genRes.ok ? avgSeries(genRes.data, REE_IDS.solar_term): null;
+        const hidro     = genRes.ok ? avgSeries(genRes.data, REE_IDS.hidro)     : null;
+        const nuclear   = genRes.ok ? avgSeries(genRes.data, REE_IDS.nuclear)   : null;
+        const totalGen  = genRes.ok ? avgSeries(genRes.data, REE_IDS.gen_total) : null;
+
+        const totalRenov = (eolica||0) + (solar_fv||0) + (solar_t||0) + (hidro||0);
+        const pctRenov   = totalGen > 0 ? Math.round((totalRenov / totalGen) * 1000) / 10 : null;
+        const pctCO2     = totalGen > 0 ? Math.round(((totalRenov + (nuclear||0)) / totalGen) * 1000) / 10 : null;
+
+        const spotVals  = precioRes.ok ? extractREESeries(precioRes.data, REE_IDS.precio_spot) : [];
+        const pvpcVals  = precioRes.ok ? extractREESeries(precioRes.data, REE_IDS.pvpc)        : [];
+        const horasCero = spotVals.filter(v => (v.value ?? 999) <= PRECIO_CERO_UMBRAL_EUR).length;
+        const precMedio = spotVals.length
+          ? Math.round(spotVals.reduce((s, v) => s + (v.value||0), 0) / spotVals.length * 100) / 100
+          : null;
+        const pvpcMedio = pvpcVals.length
+          ? Math.round(pvpcVals.reduce((s, v) => s + (v.value||0), 0) / pvpcVals.length * 100) / 100
+          : null;
+
+        const buildMonthly = (data, id) => {
+          if (!genRes.ok) return [];
+          return extractREESeries(data, id).map(v => ({
+            mes: (v.datetime || '').substring(0, 7),
+            value_mwh: v.value,
+          }));
+        };
+
+        resultados.push({
+          year,
+          completo: year < currentYear,
+          periodo: { start, end: endDate },
+          eolica_avg_mwh:   eolica,
+          solar_fv_avg_mwh: solar_fv,
+          solar_t_avg_mwh:  solar_t,
+          hidro_avg_mwh:    hidro,
+          nuclear_avg_mwh:  nuclear,
+          total_gen_avg_mwh: totalGen,
+          total_renovable_avg_mwh: totalRenov,
+          pct_renovable_medio:  pctRenov,
+          pct_libre_co2_medio:  pctCO2,
+          precio_spot_medio_eur_mwh: precMedio,
+          pvpc_medio_eur_mwh: pvpcMedio,
+          dias_precio_cero: horasCero,
+          mensual: {
+            eolica:    buildMonthly(genRes.data, REE_IDS.eolica),
+            solar_fv:  buildMonthly(genRes.data, REE_IDS.solar_fv),
+            solar_term:buildMonthly(genRes.data, REE_IDS.solar_term),
+            hidro:     buildMonthly(genRes.data, REE_IDS.hidro),
+          },
+          error: null,
+        });
+      } catch (yearErr) {
+        resultados.push({ year, error: yearErr.message });
+      }
+    }
+
+    res.json({
+      fromYear,
+      toYear,
+      fuente: 'apidatos.ree.es — publico (estructura-generacion + precios)',
+      anos: resultados,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[snfi-u2/renewables-historic]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 RENEWABLES HISTORICO · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error renewables-historic' });
+  }
+});
+
+/* ============================================================
+   S-NFI U2 · ESIOS token endpoints (token requerido)
+   Token en process.env.ESIOS_API_KEY
+   ============================================================ */
+
+async function fetchESIOS(indicatorId, startDate, endDate, timeTrunc = 'hour') {
+  const { default: https } = await import('node:https');
+  const token = process.env.ESIOS_API_KEY || process.env.ESIOS_TOKEN || '';
+  const url = `${ESIOS_BASE}/indicators/${indicatorId}?start_date=${encodeURIComponent(startDate + 'T00:00:00')}&end_date=${encodeURIComponent(endDate + 'T23:59:59')}&time_trunc=${timeTrunc}`;
+  return new Promise((resolve) => {
+    https.get(url, {
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': `Token token=${token}`,
+      },
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(d);
+          resolve({ ok: res.statusCode === 200, status: res.statusCode, data: json });
+        } catch {
+          resolve({ ok: false, status: res.statusCode, data: null });
+        }
+      });
+    }).on('error', e => resolve({ ok: false, status: 0, data: null, error: e.message }));
+  });
+}
+
+function extractESIOSValues(data) {
+  return data?.indicator?.values || [];
+}
+
+/*
+ * GET /api/snfi-u2/curtailment?from=2020&to=2026
+ * Energía Renovable No Integrable por restricciones técnicas
+ * Indicadores ESIOS:
+ *   2200 —ERNI RTT SNP (MWh)
+ *   2201 —ERNI Balance SNP (MWh)
+ *   2202 —ERNI Total SNP (MWh)
+ *   10456 — % ERNI RTT PDBF Fase 1
+ *   10457 — % ERNI RTD PDBF Fase 1
+ *   10458 — % ERNI RTT tiempo real
+ *   10459 — % ERNI RTD tiempo real
+ *   10462 — % ERNI total
+ *   10351 — Generación T.Real renovable (para ratio)
+ */
+app.get('/api/snfi-u2/curtailment', auth, async (req, res) => {
+  try {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const fromYear = Math.max(2020, Math.min(parseInt(req.query.from || '2020', 10), currentYear));
+    const toYear   = Math.min(currentYear, Math.max(parseInt(req.query.to || String(currentYear), 10), fromYear));
+
+    if (!process.env.ESIOS_API_KEY) return res.status(503).json({ error: 'ESIOS_TOKEN no configurado' });
+
+    const startDate = `${fromYear}-01-01`;
+    const endDate   = toYear < currentYear ? `${toYear}-12-31` : today.toISOString().split('T')[0];
+
+    // Fetch curtailment + generation renewable in parallel
+    const [erniTotalRes, erniRttRes, erniBalRes, pctTotalRes, pctRttRes, genRenovRes] = await Promise.all([
+      fetchESIOS(2202, startDate, endDate, 'month'),    // ERNI Total MWh
+      fetchESIOS(2200, startDate, endDate, 'month'),    // ERNI RTT MWh
+      fetchESIOS(2201, startDate, endDate, 'month'),    // ERNI Balance MWh
+      fetchESIOS(10462, startDate, endDate, 'month'),   // % ERNI total
+      fetchESIOS(10458, startDate, endDate, 'month'),   // % ERNI RTT tiempo real
+      fetchESIOS(10351, startDate, endDate, 'month'),   // Generación renovable total
+    ]);
+
+    const erniTotal  = erniTotalRes.ok  ? extractESIOSValues(erniTotalRes.data)  : [];
+    const erniRtt    = erniRttRes.ok    ? extractESIOSValues(erniRttRes.data)    : [];
+    const erniBal    = erniBalRes.ok    ? extractESIOSValues(erniBalRes.data)    : [];
+    const pctTotal   = pctTotalRes.ok   ? extractESIOSValues(pctTotalRes.data)   : [];
+    const pctRtt     = pctRttRes.ok     ? extractESIOSValues(pctRttRes.data)     : [];
+    const genRenov   = genRenovRes.ok   ? extractESIOSValues(genRenovRes.data)   : [];
+
+    // If primary ERNI indicator returned empty, surface a clear error
+    if (!erniTotal.length) {
+      const status = erniTotalRes.status || erniRttRes.status || 403;
+      return res.status(503).json({
+        error: `Indicadores ERNI no accesibles via ESIOS (HTTP ${status}). Los indicadores 2200/2201/2202 requieren permisos de cuenta institucional. Token personal sin acceso a datos de curtailment.`,
+        esiosStatus: status,
+        indicadores: [2202, 2200, 2201],
+      });
+    }
+
+    // Index by month YYYY-MM
+    const idxByMonth = (vals) => {
+      const m = {};
+      for (const v of vals) {
+        const k = (v.datetime || '').substring(0, 7);
+        if (k) m[k] = v.value;
+      }
+      return m;
+    };
+
+    const iTotal  = idxByMonth(erniTotal);
+    const iRtt    = idxByMonth(erniRtt);
+    const iBal    = idxByMonth(erniBal);
+    const iPctT   = idxByMonth(pctTotal);
+    const iPctR   = idxByMonth(pctRtt);
+    const iGenR   = idxByMonth(genRenov);
+
+    // Build monthly series from all keys
+    const allMonths = [...new Set([
+      ...Object.keys(iTotal), ...Object.keys(iRtt), ...Object.keys(iBal),
+      ...Object.keys(iPctT), ...Object.keys(iPctR), ...Object.keys(iGenR),
+    ])].sort();
+
+    const mensual = allMonths.map(mes => ({
+      mes,
+      erni_total_mwh:    iTotal[mes] ?? null,
+      erni_rtt_mwh:      iRtt[mes]   ?? null,
+      erni_balance_mwh:  iBal[mes]   ?? null,
+      pct_erni_total:    iPctT[mes]  ?? null,
+      pct_erni_rtt:      iPctR[mes]  ?? null,
+      gen_renovable_mwh: iGenR[mes]  ?? null,
+    }));
+
+    // Annual aggregates
+    const porAnio = {};
+    for (const m of mensual) {
+      const y = m.mes.substring(0, 4);
+      if (!porAnio[y]) porAnio[y] = { year: y, erni_total_mwh: 0, erni_rtt_mwh: 0, erni_balance_mwh: 0, gen_renovable_mwh: 0, meses: 0 };
+      porAnio[y].erni_total_mwh   += m.erni_total_mwh   || 0;
+      porAnio[y].erni_rtt_mwh     += m.erni_rtt_mwh     || 0;
+      porAnio[y].erni_balance_mwh += m.erni_balance_mwh || 0;
+      porAnio[y].gen_renovable_mwh+= m.gen_renovable_mwh|| 0;
+      porAnio[y].meses++;
+    }
+    const anual = Object.values(porAnio).map(a => ({
+      ...a,
+      pct_curtailment: a.gen_renovable_mwh > 0
+        ? Math.round((a.erni_total_mwh / a.gen_renovable_mwh) * 10000) / 100
+        : null,
+    }));
+
+    const totalErni = mensual.reduce((s, m) => s + (m.erni_total_mwh || 0), 0);
+    const totalRenov = mensual.reduce((s, m) => s + (m.gen_renovable_mwh || 0), 0);
+
+    busEmit({
+      id: crypto.randomUUID(), ts: new Date().toISOString(), seq: busEvents.length + 1,
+      origin: 'SNFI-U2', dest: 'ELVI-RA', type: 'event', state: 'COMPLETED',
+      label: `CURTAILMENT ${fromYear}-${toYear} · ${Math.round(totalErni / 1000)} GWh no integrados`,
+      payload: { fromYear, toYear, totalErniMwh: Math.round(totalErni) },
+      user: req.user,
+    });
+
+    res.json({
+      fromYear, toYear,
+      fuente: 'api.esios.ree.es — indicadores 2200/2201/2202/10458/10462/10351',
+      descripcion: 'Energia Renovable No Integrable (ERNI) por restricciones tecnicas de red',
+      total_erni_gwh: Math.round(totalErni / 1000 * 100) / 100,
+      total_gen_renovable_gwh: Math.round(totalRenov / 1000 * 100) / 100,
+      pct_curtailment_global: totalRenov > 0 ? Math.round((totalErni / totalRenov) * 10000) / 100 : null,
+      anual,
+      mensual,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[snfi-u2/curtailment]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 CURTAILMENT · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error curtailment ESIOS' });
+  }
+});
+
+/*
+ * GET /api/snfi-u2/installed-capacity
+ * Potencia instalada por tecnología (histórico anual)
+ * Indicadores:
+ *   1477  Nuclear       1486  Solar FV      1487  Solar Térmica
+ *   1483  Eólica        1484  Hidroeólica   10302 Total Renovable
+ *   10301 Total No Renovable               1488  Otras renovables
+ *   1489  Cogeneración  1490  Residuos no renov  1491 Residuos renov
+ */
+app.get('/api/snfi-u2/installed-capacity', auth, async (req, res) => {
+  try {
+    if (!process.env.ESIOS_API_KEY) return res.status(503).json({ error: 'ESIOS_TOKEN no configurado' });
+
+    const today = new Date();
+    const startDate = '2020-01-01';
+    const endDate   = today.toISOString().split('T')[0];
+
+    const IDS = {
+      nuclear:        1477,
+      solar_fv:       1486,
+      solar_term:     1487,
+      eolica:         1483,
+      hidro:          467,
+      otras_renov:    1488,
+      cogeneracion:   1489,
+      residuos_renov: 1491,
+      residuos_norenov: 1490,
+      total_renov:    10302,
+      total_norenov:  10301,
+    };
+
+    const results = await Promise.all(
+      Object.entries(IDS).map(([key, id]) =>
+        fetchESIOS(id, startDate, endDate, 'month').then(r => ({ key, values: r.ok ? extractESIOSValues(r.data) : [] }))
+      )
+    );
+
+    // Index each tech by month
+    const byTech = {};
+    for (const { key, values } of results) {
+      byTech[key] = {};
+      for (const v of values) {
+        const k = (v.datetime || '').substring(0, 7);
+        if (k) byTech[key][k] = v.value;
+      }
+    }
+
+    const allMonths = [...new Set(results.flatMap(r => r.values.map(v => (v.datetime || '').substring(0, 7))))].filter(Boolean).sort();
+
+    const mensual = allMonths.map(mes => {
+      const row = { mes };
+      for (const key of Object.keys(IDS)) row[key + '_mw'] = byTech[key][mes] ?? null;
+      return row;
+    });
+
+    res.json({
+      fuente: 'api.esios.ree.es — potencia instalada por tecnologia (2020-hoy)',
+      indicadores: IDS,
+      mensual,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[snfi-u2/installed-capacity]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 INSTALLED CAPACITY · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error installed-capacity ESIOS' });
+  }
+});
+
+/*
+ * GET /api/snfi-u2/esios-generation?from=2020&to=2026&trunc=month
+ * Mix generación histórico via ESIOS (más profundo que apidatos.ree.es)
+ * Indicadores T.Real por tecnología:
+ *   10351 Renovable total   10352 No renovable total
+ *   551   Eólica            552   Solar total
+ *   1295  Solar FV          1294  Solar Térmica
+ *   549   Nuclear           546   Hidráulica
+ *   1293  Demanda real      600   Precio SPOT
+ */
+app.get('/api/snfi-u2/esios-generation', auth, async (req, res) => {
+  try {
+    if (!process.env.ESIOS_API_KEY) return res.status(503).json({ error: 'ESIOS_TOKEN no configurado' });
+
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const fromYear = Math.max(2020, parseInt(req.query.from || '2020', 10));
+    const toYear   = Math.min(currentYear, parseInt(req.query.to || String(currentYear), 10));
+    const trunc    = ['hour','day','month','year'].includes(req.query.trunc) ? req.query.trunc : 'month';
+
+    const startDate = `${fromYear}-01-01`;
+    const endDate   = toYear < currentYear ? `${toYear}-12-31` : today.toISOString().split('T')[0];
+
+    const IDS = {
+      renovable_total: 10351,
+      no_renovable:    10352,
+      eolica:          551,
+      solar:           552,
+      solar_fv:        1295,
+      solar_term:      1294,
+      nuclear:         549,
+      hidro:           546,
+      demanda_real:    1293,
+      precio_spot:     600,
+    };
+
+    const results = await Promise.all(
+      Object.entries(IDS).map(([key, id]) =>
+        fetchESIOS(id, startDate, endDate, trunc).then(r => ({ key, values: r.ok ? extractESIOSValues(r.data) : [] }))
+      )
+    );
+
+    const byKey = {};
+    for (const { key, values } of results) {
+      byKey[key] = {};
+      const klen = trunc === 'hour' ? 13 : trunc === 'day' ? 10 : 7;
+      for (const v of values) {
+        const k = (v.datetime || '').substring(0, klen);
+        if (k) byKey[key][k] = v.value;
+      }
+    }
+
+    const allKeys = [...new Set(results.flatMap(r => {
+      const klen = trunc === 'hour' ? 13 : trunc === 'day' ? 10 : 7;
+      return r.values.map(v => (v.datetime || '').substring(0, klen));
+    }))].filter(Boolean).sort();
+
+    const serie = allKeys.map(k => {
+      const row = { datetime: k };
+      for (const key of Object.keys(IDS)) row[key] = byKey[key][k] ?? null;
+      // derived
+      const renov = row.renovable_total || 0;
+      const noRen = row.no_renovable || 0;
+      const total = renov + noRen;
+      row.total_gen = total || null;
+      row.pct_renovable = total > 0 ? Math.round((renov / total) * 1000) / 10 : null;
+      row.precio_negativo = (row.precio_spot !== null && row.precio_spot < 0);
+      return row;
+    });
+
+    // Aggregate per year if trunc=month
+    const anual = {};
+    for (const row of serie) {
+      const y = row.datetime.substring(0, 4);
+      if (!anual[y]) anual[y] = { year: y, horas_precio_negativo: 0, renov_sum: 0, norenov_sum: 0, n: 0 };
+      anual[y].horas_precio_negativo += row.precio_negativo ? 1 : 0;
+      anual[y].renov_sum += row.renovable_total || 0;
+      anual[y].norenov_sum += row.no_renovable || 0;
+      anual[y].n++;
+    }
+    const anualArr = Object.values(anual).map(a => ({
+      ...a,
+      pct_renovable_medio: (a.renov_sum + a.norenov_sum) > 0
+        ? Math.round((a.renov_sum / (a.renov_sum + a.norenov_sum)) * 1000) / 10
+        : null,
+    }));
+
+    res.json({
+      fromYear, toYear, trunc,
+      fuente: 'api.esios.ree.es — generacion T.Real + precio SPOT + demanda (token personal)',
+      indicadores: IDS,
+      serie,
+      anual: anualArr,
+      calculadoAt: new Date().toISOString(),
+    });
+  } catch (ex) {
+    console.error('[snfi-u2/esios-generation]', ex);
+    busEmitAlert({ origin: 'SNFI-U2', label: `S-NFI U2 ESIOS GENERATION · fallo`, detail: ex.message, user: req.user });
+    res.status(500).json({ error: ex.message || 'error esios-generation' });
+  }
+});
+
+/* ============================================================
+   S-NFI U2 · Calculos Energia Desperdiciada
+   Persistencia en DATA_DIR/u2_calculos.json
+   ============================================================ */
+const U2_CALC_FILE = path.join(DATA_DIR, 'u2_calculos.json');
+if (!fs.existsSync(U2_CALC_FILE)) fs.writeFileSync(U2_CALC_FILE, JSON.stringify([], null, 2));
+
+function readU2Calculos() {
+  try { return JSON.parse(fs.readFileSync(U2_CALC_FILE, 'utf8')); }
+  catch { return []; }
+}
+function writeU2Calculos(arr) {
+  atomicWriteJson(U2_CALC_FILE, arr);
+}
+
+// GET /api/u2/calculos — lista calculos guardados (auth)
+app.get('/api/u2/calculos', auth, (req, res) => {
+  const all = readU2Calculos();
+  res.json({ calculos: all });
+});
+
+// POST /api/u2/calculos — guarda un calculo certificado
+app.post('/api/u2/calculos', auth, (req, res) => {
+  const {
+    periodo,        // { from: 'YYYY-MM', to: 'YYYY-MM' }
+    metodologia,    // 'proxy_spot' | 'erni_esios'
+    gwh_desperdiciados,
+    gwh_renovable,
+    horas_precio_bajo,
+    pct_curtailment,
+    fuente,
+    notas,
+    // campos opcionales calculadora
+    mw_instalados,
+    horas_op_dia,
+    pct_eficiencia,
+    precio_local_eur_mwh,
+    // campos calculadora derivados
+    gwh_absorbibles_dia,
+    gwh_absorbibles_ano,
+    t_biopellet_estimadas,
+    ahorro_vs_gestion_externa,
+    score_bss,
+  } = req.body;
+
+  if (!periodo || gwh_desperdiciados == null) {
+    return res.status(400).json({ error: 'periodo y gwh_desperdiciados son requeridos' });
+  }
+
+  const id = crypto.randomUUID();
+  const entry = {
+    id,
+    usuario: req.user,
+    creadoAt: new Date().toISOString(),
+    periodo,
+    metodologia: metodologia || 'proxy_spot',
+    gwh_desperdiciados,
+    gwh_renovable: gwh_renovable ?? null,
+    horas_precio_bajo: horas_precio_bajo ?? null,
+    pct_curtailment: pct_curtailment ?? null,
+    fuente: fuente || 'apidatos.ree.es / api.esios.ree.es',
+    notas: notas || '',
+    calculadora: {
+      mw_instalados: mw_instalados ?? null,
+      horas_op_dia: horas_op_dia ?? null,
+      pct_eficiencia: pct_eficiencia ?? null,
+      precio_local_eur_mwh: precio_local_eur_mwh ?? null,
+      gwh_absorbibles_dia: gwh_absorbibles_dia ?? null,
+      gwh_absorbibles_ano: gwh_absorbibles_ano ?? null,
+      t_biopellet_estimadas: t_biopellet_estimadas ?? null,
+      ahorro_vs_gestion_externa: ahorro_vs_gestion_externa ?? null,
+      score_bss: score_bss ?? null,
+    },
+    hash: crypto.createHash('sha256').update(JSON.stringify({ periodo, gwh_desperdiciados, metodologia, fuente })).digest('hex').substring(0, 16),
+  };
+
+  const all = readU2Calculos();
+  all.unshift(entry);
+  writeU2Calculos(all);
+
+  busEmit({ type: 'u2-calculo', label: `U2 Calculo guardado · ${periodo?.from || '?'}-${periodo?.to || '?'} · ${gwh_desperdiciados} GWh`, user: req.user, at: entry.creadoAt });
+  res.json({ ok: true, calculo: entry });
+});
+
+// DELETE /api/u2/calculos/:id — borra un calculo
+app.delete('/api/u2/calculos/:id', auth, (req, res) => {
+  const { id } = req.params;
+  const all = readU2Calculos();
+  const idx = all.findIndex(c => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'calculo no encontrado' });
+  const [removed] = all.splice(idx, 1);
+  writeU2Calculos(all);
+  busEmit({ type: 'u2-calculo-delete', label: `U2 Calculo eliminado · ${id}`, user: req.user, at: new Date().toISOString() });
+  res.json({ ok: true, removed });
 });
 
 /* ---------- static frontend ---------- */
@@ -2141,10 +3308,8 @@ app.get('/', (req, res) => res.redirect('/pages/login.html'));
       }
     }
 
-    // Override DB_PATH so Rëff SQLite goes to its own data folder
-    if (!process.env.DB_PATH) {
-      process.env.DB_PATH = path.join(REFF_DIST, '../data/snfi.db');
-    }
+    // Always force DB_PATH to Rëff's own data folder, regardless of env
+    process.env.DB_PATH = path.join(REFF_DIST, '../data/snfi.db');
 
     const toFileUrl = (p) => 'file:///' + p.replace(/\\/g, '/');
 
@@ -2153,47 +3318,74 @@ app.get('/', (req, res) => res.redirect('/pages/login.html'));
 
     const { signToken } = await import(toFileUrl(path.join(REFF_SERVER, 'auth.js')));
 
-    const { default: reffAuthRoutes }  = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'auth.routes.js')));
-    const { default: reffChatRoutes }  = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'chat.routes.js')));
-    const { default: reffAdminRoutes } = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'admin.routes.js')));
+    const { default: reffAuthRoutes }      = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'auth.routes.js')));
+    const { default: reffSheetsRoutes }    = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'sheets.routes.js')));
+    const { default: reffCompaniesRoutes } = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'companies.routes.js')));
+    const { default: reffGeoRoutes }       = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'geo.routes.js')));
+    const { default: reffHerzogRoutes }    = await import(toFileUrl(path.join(REFF_SERVER, 'routes', 'herzog.routes.js')));
 
     const reffHealth = (_req, res) => res.json({ status: 'ok', service: 'reff', env: process.env.NODE_ENV || 'development' });
 
-    // Issues a short-lived JWT for 'marc' so the embedded React app can authenticate without a login screen
-    app.get('/reff/api/guest-token', (_req, res) => {
-      const userRow = getUserByUsername('marc');
-      if (!userRow) return res.status(500).json({ error: 'usuario marc no encontrado en DB' });
-      const token = signToken({ userId: userRow.id });
-      res.json({ token });
+    // Issues a short-lived JWT so el cliente React de Rëff autentica con la sesión de Elvi-Ra, sin login propio
+    const ELVIRA_TO_REFF_USERNAME = {
+      'mblanes@snficorp.com': 'marc',
+      'nour@snficorp.com': 'nour',
+      'ventures@snficorp.com': 'amir',
+    };
+    app.get('/reff/api/guest-token', (req, res) => {
+      const elviraUser = req.headers['x-elvira-user'];
+      const normalized = (typeof elviraUser === 'string' && elviraUser.trim()) ? elviraUser.trim().toLowerCase() : '';
+      const username = ELVIRA_TO_REFF_USERNAME[normalized] || 'marc';
+      const userRow = getUserByUsername(username) || getUserByUsername('marc');
+      if (!userRow) return res.status(500).json({ error: 'usuario no encontrado en DB de Rëff' });
+      const token = signToken({ userId: userRow.id, username: userRow.username });
+      res.json({
+        token,
+        user: {
+          id: userRow.id,
+          username: userRow.username,
+          displayName: userRow.display_name,
+          avatarUrl: userRow.avatar_url ?? null,
+        },
+      });
     });
 
     app.get('/reff/api/health', reffHealth);
-    app.use('/reff/api/auth',  reffAuthRoutes);
-    app.use('/reff/api/chat',  reffChatRoutes);
-    app.use('/reff/api/admin', reffAdminRoutes);
+    app.use('/reff/api/auth', reffAuthRoutes);
+    app.use('/reff/api/crm',  reffSheetsRoutes);
+    app.use('/reff/api/crm',  reffCompaniesRoutes);
+    app.use('/reff/api/geo',  reffGeoRoutes);
+    app.use('/reff/api/herzog', reffHerzogRoutes);
 
     // Aliases at root /api so Rëff React client (built with base path "/") resolves correctly
     app.get('/api/guest-token', (_req, res) => res.redirect('/reff/api/guest-token'));
     app.get('/api/reff-health', reffHealth);
-    app.use('/api/auth',  reffAuthRoutes);
-    app.use('/api/chat',  reffChatRoutes);
-    app.use('/api/admin', reffAdminRoutes);
+    app.use('/api/auth',   reffAuthRoutes);
+    app.use('/api/crm',    reffSheetsRoutes);
+    app.use('/api/crm',    reffCompaniesRoutes);
+    app.use('/api/geo',    reffGeoRoutes);
+    app.use('/api/herzog', reffHerzogRoutes);
 
     // Serve Rëff React client — assets built with base "/" so /assets/* must be mirrored
     if (fs.existsSync(REFF_CLIENT)) {
-      // Wrapper: injects JWT into localStorage before loading the React SPA
-      // Wrapper page: fetches a guest JWT, stores it under the key the React app expects, then enters the SPA
+      // Wrapper: usa la sesión de Elvi-Ra (elvira_user) para obtener un token de Rëff, lo guarda
+      // bajo las claves que espera el cliente React (reff_token / reff_user) y entra al SPA.
       app.get('/reff', (_req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(`<!doctype html><html><head><meta charset="UTF-8"><title>Rëff</title></head><body>
 <script>
 (async () => {
   try {
-    const r = await fetch('/reff/api/guest-token');
-    const { token } = await r.json();
-    if (token) localStorage.setItem('snfi.token', token);
+    const elviraUser = localStorage.getItem('elvira_user') || '';
+    const headers = {};
+    if (elviraUser) headers['X-Elvira-User'] = elviraUser;
+    const r = await fetch('/reff/api/guest-token', { headers });
+    if (!r.ok) throw new Error('guest-token HTTP ' + r.status);
+    const { token, user } = await r.json();
+    if (token) localStorage.setItem('reff_token', token);
+    if (user) localStorage.setItem('reff_user', JSON.stringify(user));
   } catch(e) { console.warn('[reff-wrapper] guest-token failed', e); }
-  location.replace('/reff/app/crm');
+  location.replace('/reff/app/dashboard');
 })();
 </script>
 </body></html>`);
@@ -2211,3 +3403,43 @@ app.get('/', (req, res) => res.redirect('/pages/login.html'));
 
 const PORT = process.env.PORT || 5173;
 app.listen(PORT, () => console.log(`Elvi-Ra running → http://localhost:${PORT}`));
+
+const TWIN_PORT = process.env.TWIN_PORT || 5174;
+const TWIN_TOKEN = process.env.TWIN_TOKEN;
+
+if (process.env.ENABLE_TWIN_PORT === 'true') {
+  const twinApp = express();
+
+  // Middleware de seguridad soberana para el Twin
+  const twinAuthMiddleware = (req, res, next) => {
+    const token = req.headers['x-twin-token'];
+    
+    if (!TWIN_TOKEN || token !== TWIN_TOKEN) {
+      // Registrar el intento de acceso no autorizado en el Bus para Sentinel
+      busEmit({
+        id: crypto.randomUUID(),
+        ts: new Date().toISOString(),
+        origin: 'SENTINEL',
+        dest: 'TWIN',
+        type: 'alert',
+        state: 'BLOCKED',
+        label: `INTENTO ACCESO TWIN RECHAZADO · IP: ${req.ip}`,
+        payload: { path: req.path, method: req.method, userAgent: req.headers['user-agent'] }
+      });
+      
+      return res.status(401).json({ error: 'Twin Infrastructure: Unauthorized Access' });
+    }
+    next();
+  };
+
+  twinApp.use(twinAuthMiddleware);
+
+  twinApp.get('/health', (_req, res) => res.json({ 
+    status: 'active', 
+    service: 'twin-elvira-snfi', 
+    identity: 'authenticated' 
+  }));
+
+  twinApp.listen(TWIN_PORT, '127.0.0.1', () =>
+    console.log(`[Twin] Enlace seguro activo (Requiere x-twin-token) en 127.0.0.1:${TWIN_PORT}`));
+}

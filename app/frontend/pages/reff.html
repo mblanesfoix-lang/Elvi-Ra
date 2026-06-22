@@ -202,8 +202,14 @@
   </div>
 
   <script type="module">
-    import { getUser, clearSession, requireAuth, api } from '/js/api.js';
+    import { getUser, clearSession, requireAuth, api, getToken } from '/js/api.js';
     requireAuth();
+
+    // Mesa guard
+    await fetch('/api/me/permissions', { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.json())
+      .then(p => { if (!(p.mesas || []).includes('reff')) location.href = '/pages/dashboard.html'; })
+      .catch(() => {});
 
     const user = getUser() || '';
     document.getElementById('userTag').textContent = user;
